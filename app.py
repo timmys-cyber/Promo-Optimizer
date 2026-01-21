@@ -20,6 +20,7 @@ st.markdown("""
     .stButton>button {
         background-color: #1e1e1e; color: #00ff88; border: none; border-radius: 8px; font-weight: bold;
     }
+    input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -54,7 +55,7 @@ with st.container():
 if run_scan:
     api_key = st.secrets.get("ODDS_API_KEY", "")
     if not api_key:
-        st.error("Missing API Key!")
+        st.error("Missing API Key! Set ODDS_API_KEY in Streamlit Secrets.")
     else:
         try:
             max_wager = float(max_wager_raw)
@@ -122,7 +123,7 @@ if run_scan:
                                 elif promo_type == "Bonus Bet":
                                     h_needed = round((max_wager * s_m) / (1 + h_m))
                                     profit = min(((max_wager * s_m) - h_needed), (h_needed * h_m))
-                                else: # No-Sweat @ 0.65
+                                else: # No-Sweat @ 0.65 conversion
                                     mc = 0.65
                                     h_needed = round((max_wager * (s_m + (1 - mc))) / (h_m + 1))
                                     profit = min(((max_wager * s_m) - h_needed), ((h_needed * h_m) + (max_wager * mc) - max_wager))
@@ -140,7 +141,6 @@ if run_scan:
 
         # --- CATEGORIZATION & DISPLAY ---
         st.write("### Opportunities Ranked by Profit")
-        
         sorted_all = sorted(all_opps, key=lambda x: x['profit'], reverse=True)
 
         tab1, tab2, tab3 = st.tabs(["Low Hedge ($0-$150)", "Medium Hedge ($150-$250)", "High Hedge ($250+)"])
@@ -150,7 +150,6 @@ if run_scan:
                 st.info("No opportunities found in this hedge range.")
                 return
             for op in opp_list:
-                # Clean Title without badges
                 title = f"+${op['profit']:.2f} | {op['sport']} | {op['game']}"
                 with st.expander(title):
                     c1, c2, c3 = st.columns(3)
@@ -172,9 +171,42 @@ if run_scan:
             display_list([o for o in sorted_all if o['hedge'] >= 250])
 
 # --- MANUAL CALCULATOR ---
-# (Manual Calculator code remains exactly as provided previously)
-
-
-
-
-
+st.write("---")
+st.subheader("Manual Calculator")
+with st.expander("Open Manual Calculator", expanded=True):
+    with st.form("manual_calc_form"):
+        m_promo = st.radio("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet"], horizontal=True, key="m_strat")
+        m_col1, m_col2 = st.columns(2)
+        with m_col1:
+            m_s_price = st.text_input("Source Odds", value="250")
+            m_wager = st.text_input("Wager ($)", value="50.0")
+            m_boost = st.text_input("Boost %", value="50") if m_promo == "Profit Boost (%)" else "0"
+        with m_col2:
+            m_h_price = st.text_input("Hedge Odds", value="-280")
+            m_conv = st.text_input("Refund %", value="65") if m_promo == "No-Sweat Bet" else "0"
+        
+        if st.form_submit_button("Calculate Hedge", use_container_width=True):
+            try:
+                ms_p, mw, mh_p = float(m_s_price), float(m_wager), float(m_h_price)
+                ms_m = (ms_p / 100) if ms_p > 0 else (100 / abs(ms_p))
+                mh_m = (mh_p / 100) if mh_p > 0 else (100 / abs(mh_p))
+                
+                if m_promo == "Profit Boost (%)":
+                    boosted_m = ms_m * (1 + float(m_boost)/100)
+                    m_h = round((mw * (1 + boosted_m)) / (1 + mh_m))
+                    m_p = min(((mw * boosted_m) - m_h), ((m_h * mh_m) - mw))
+                elif m_promo == "Bonus Bet":
+                    m_h = round((mw * ms_m) / (1 + mh_m))
+                    m_p = min(((mw * ms_m) - m_h), (m_h * mh_m))
+                else: 
+                    mc = float(m_conv)/100 
+                    m_h = round((mw * (ms_m + (1 - mc))) / (mh_m + 1))
+                    m_p = min(((mw * ms_m) - m_h), ((m_h * mh_m) + (mw * mc) - mw))
+                
+                st.divider()
+                rc1, rc2, rc3 = st.columns(3)
+                rc1.metric("Hedge Amount", f"${m_h:.0f}")
+                rc2.metric("Net Profit", f"${m_p:.2f}")
+                rc3.metric("ROI", f"{((m_p/mw)*100):.1f}%")
+            except: 
+                st.error("Please enter valid numbers.")
