@@ -43,9 +43,9 @@ with st.container():
         st.divider()
         col3, col4 = st.columns([3, 1])
         with col3:
-            # UPDATED: Expanded Tennis to include all major and tour events
-            sport_options = ["NBA", "NHL", "Tennis (All Events)", "MLB", "NCAAB", "NFL"]
-            selected_sports = st.multiselect("Select Sport(s)", ["All Sports"] + sport_options, default=["Tennis (All Events)", "NBA"])
+            # UPDATED: Tennis All removed, Aussie Open added specifically
+            sport_options = ["NBA", "NHL", "Aussie Open", "MLB", "NCAAB", "NFL"]
+            selected_sports = st.multiselect("Select Sport(s)", ["All Sports"] + sport_options, default=["Aussie Open", "NBA"])
         with col4:
             max_wager_raw = st.text_input("Wager ($)", value="50.0")
 
@@ -64,20 +64,13 @@ if run_scan:
         except:
             max_wager, boost_val = 50.0, 0.0
 
-        # UPDATED: Mapping now includes Grand Slams AND general ATP/WTA Tour events
         sport_map = {
             "NBA": ["basketball_nba"], 
             "NFL": ["americanfootball_nfl"],
             "NHL": ["icehockey_nhl"], 
             "MLB": ["baseball_mlb"],
             "NCAAB": ["basketball_ncaab"],
-            "Tennis (All Events)": [
-                "tennis_atp_aus_open", "tennis_wta_aus_open", # Grand Slams
-                "tennis_atp_french_open", "tennis_wta_french_open",
-                "tennis_atp_wimbledon", "tennis_wta_wimbledon",
-                "tennis_atp_us_open", "tennis_wta_us_open",
-                "tennis_atp_lta", "tennis_wta_lta" # Major Tour Events
-            ]
+            "Aussie Open": ["tennis_atp_aus_open", "tennis_wta_aus_open"]
         }
         
         sports_to_scan = []
@@ -149,7 +142,7 @@ if run_scan:
                 except Exception as e: pass
 
         # --- CATEGORIZATION & DISPLAY ---
-        st.write("### Opportunities Ranked by Profit")
+        st.write("### Top 5 Opportunities Per Category")
         sorted_all = sorted(all_opps, key=lambda x: x['profit'], reverse=True)
 
         tab1, tab2, tab3 = st.tabs(["Low Hedge ($0-$150)", "Medium Hedge ($150-$250)", "High Hedge ($250+)"])
@@ -158,7 +151,8 @@ if run_scan:
             if not opp_list:
                 st.info("No opportunities found in this hedge range.")
                 return
-            for op in opp_list:
+            # UPDATED: Slice to show only top 5
+            for op in opp_list[:5]:
                 title = f"+${op['profit']:.2f} | {op['sport']} | {op['game']}"
                 with st.expander(title):
                     c1, c2, c3 = st.columns(3)
