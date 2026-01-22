@@ -20,6 +20,7 @@ st.markdown("""
     .stButton>button {
         background-color: #1e1e1e; color: #00ff88; border: none; border-radius: 8px; font-weight: bold;
     }
+    input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -43,7 +44,7 @@ with st.container():
 
         st.divider()
         
-        # --- UPDATED SPORT SELECTION LOGIC ---
+        # --- NEW SPORT LABELS ---
         sport_labels = ["All Sports", "NBA", "NHL", "NFL", "NCAAB", "ATP", "WTA", "AusOpen(M)", "AusOpen(W)"]
         
         col3, col4 = st.columns([3, 1])
@@ -67,7 +68,7 @@ if run_scan:
         except:
             max_wager, boost_val = 50.0, 0.0
 
-        # Mapping UI labels to the exact API keys requested
+        # MAPPING UI LABELS TO REQUESTED KEYS
         sport_map = {
             "NBA": ["basketball_nba"],
             "NHL": ["icehockey_nhl"],
@@ -79,7 +80,6 @@ if run_scan:
             "AusOpen(W)": ["tennis_wta_aus_open_singles"]
         }
         
-        # If All Sports is selected, scan everything in the list
         if sport_cat == "All Sports":
             sports_to_scan = [key for sublist in sport_map.values() for key in sublist]
         else:
@@ -105,8 +105,7 @@ if run_scan:
                             commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
                             if commence_time <= now_utc: continue 
                             
-                            source_odds = []
-                            hedge_odds = []
+                            source_odds, hedge_odds = [], []
                             
                             for book in game['bookmakers']:
                                 for market in book['markets']:
@@ -130,7 +129,6 @@ if run_scan:
                                 s_m = (s['price'] / 100) if s['price'] > 0 else (100 / abs(s['price']))
                                 h_m = (best_h['price'] / 100) if best_h['price'] > 0 else (100 / abs(best_h['price']))
 
-                                # Calculations for different promos
                                 if promo_type == "Profit Boost (%)":
                                     boosted_s_m = s_m * (1 + (boost_val / 100))
                                     h_needed = round((max_wager * (1 + boosted_s_m)) / (1 + h_m))
@@ -146,10 +144,10 @@ if run_scan:
                                     profit = min(((max_wager * s_m) - h_needed), ((h_needed * h_m) + (max_wager * mc) - max_wager))
                                     rating = (profit / max_wager) * 100
 
-                                if profit > -10.0:
+                                if profit > -5.0:
                                     all_opps.append({
                                         "game": f"{game['away_team']} vs {game['home_team']}",
-                                        "sport": sport.split('_')[-1].upper(),
+                                        "sport": sport.upper().replace('TENNIS_',''),
                                         "time": (commence_time - timedelta(hours=6)).strftime("%m/%d %I:%M %p"),
                                         "profit": profit, "hedge": h_needed, "rating": rating,
                                         "s_team": s['team'], "s_book": s['book'], "s_price": s['price'],
@@ -179,3 +177,44 @@ if run_scan:
                     with c3:
                         st.metric("Net Profit", f"${op['profit']:.2f}")
                         st.caption(f"Strategy: {promo_type}")
+
+# --- MANUAL CALCULATOR (RESTORED) ---
+st.write("---")
+st.subheader("Manual Calculator")
+with st.expander("Open Manual Calculator", expanded=True):
+    with st.form("manual_calc_form"):
+        m_promo = st.radio("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet"], horizontal=True, key="m_strat")
+        m_col1, m_col2 = st.columns(2)
+        with m_col1:
+            m_s_price = st.text_input("Source Odds", value="250")
+            m_wager = st.text_input("Wager ($)", value="50.0")
+            m_boost = st.text_input("Boost %", value="50") if m_promo == "Profit Boost (%)" else "0"
+        with m_col2:
+            m_h_price = st.text_input("Hedge Odds", value="-280")
+            m_conv = st.text_input("Refund %", value="65") if m_promo == "No-Sweat Bet" else "0"
+        
+        if st.form_submit_button("Calculate Hedge", use_container_width=True):
+            try:
+                ms_p, mw, mh_p = float(m_s_price), float(m_wager), float(m_h_price)
+                ms_m = (ms_p / 100) if ms_p > 0 else (100 / abs(ms_p))
+                mh_m = (mh_p / 100) if mh_p > 0 else (100 / abs(mh_p))
+                
+                if m_promo == "Profit Boost (%)":
+                    boosted_m = ms_m * (1 + float(m_boost)/100)
+                    m_h = round((mw * (1 + boosted_m)) / (1 + mh_m))
+                    m_p = min(((mw * boosted_m) - m_h), ((m_h * mh_m) - mw))
+                elif m_promo == "Bonus Bet":
+                    m_h = round((mw * ms_m) / (1 + mh_m))
+                    m_p = min(((mw * ms_m) - m_h), (m_h * mh_m))
+                else: 
+                    mc = float(m_conv)/100 
+                    m_h = round((mw * (ms_m + (1 - mc))) / (mh_m + 1))
+                    m_p = min(((mw * ms_m) - m_h), ((m_h * mh_m) + (mw * mc) - mw))
+                
+                st.divider()
+                rc1, rc2, rc3 = st.columns(3)
+                rc1.metric("Hedge Amount", f"${m_h:.0f}")
+                rc2.metric("Net Profit", f"${m_p:.2f}")
+                rc3.metric("ROI", f"{((m_p/mw)*100):.1f}%")
+            except: 
+                st.error("Please enter valid numbers.")
