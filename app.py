@@ -36,15 +36,16 @@ with st.container():
         with col1:
             promo_type = st.radio("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet"], horizontal=True)
         with col2:
-            source_book_display = st.radio("Source Book", ["DraftKings", "FanDuel", "BetMGM"], horizontal=True)
-            source_book = source_book_display.lower().replace(" ", "") 
+            source_book_display = st.radio("Source Book", ["DraftKings", "FanDuel", "BetMGM", "Caesars"], horizontal=True)
+            source_map = {"DraftKings": "draftkings", "FanDuel": "fanduel", "BetMGM": "betmgm", "Caesars": "williamhill_us"}
+            source_book = source_map[source_book_display]
         with col_hedge:
-            hedge_book_display = st.radio("Hedge Filter", ["All Books", "DraftKings", "FanDuel", "BetMGM"], horizontal=True)
-            hedge_filter = hedge_book_display.lower().replace(" ", "")
+            hedge_book_display = st.radio("Hedge Filter", ["All Books", "DraftKings", "FanDuel", "BetMGM", "Caesars"], horizontal=True)
+            hedge_map = {"All Books": "allbooks", "DraftKings": "draftkings", "FanDuel": "fanduel", "BetMGM": "betmgm", "Caesars": "williamhill_us"}
+            hedge_filter = hedge_map[hedge_book_display]
 
         st.divider()
         sport_labels = ["All Sports", "NBA", "NHL", "NFL", "NCAAB", "ATP", "WTA", "AusOpen(M)", "AusOpen(W)"]
-        
         col3, col4 = st.columns([3, 1])
         with col3:
             sport_cat = st.radio("Sport", sport_labels, horizontal=True)
@@ -72,7 +73,8 @@ if run_scan:
         }
         
         sports_to_scan = [key for sublist in sport_map.values() for key in sublist] if sport_cat == "All Sports" else sport_map.get(sport_cat, [])
-        BOOK_LIST = "draftkings,fanduel,betmgm,bet365,williamhill_us,caesars,fanatics,espnbet"
+        # Ensure williamhill_us is in the list sent to the API
+        BOOK_LIST = "draftkings,fanduel,betmgm,bet365,williamhill_us,fanatics,espnbet"
         all_opps, now_utc = [], datetime.now(timezone.utc)
 
         with st.spinner(f"Scanning {sport_cat}..."):
@@ -127,27 +129,18 @@ if run_scan:
                 except Exception as e: st.error(f"Error: {e}")
 
         # --- GROUPED RESULTS AREA ---
-        st.write("### Top Scanned Opportunities (Sorted by Largest $ Profit)")
-        
-        brackets = [
-            ("Low Hedge ($0 - $50)", 0, 50),
-            ("Medium Hedge ($51 - $150)", 51, 150),
-            ("High Hedge ($151 - $250)", 151, 250),
-            ("Ultra Hedge ($250+)", 251, 999999)
-        ]
+        st.write("### Top Scanned Opportunities")
+        brackets = [("Low Hedge ($0 - $50)", 0, 50), ("Medium Hedge ($51 - $150)", 51, 150), ("High Hedge ($151 - $250)", 151, 250), ("Ultra Hedge ($250+)", 251, 999999)]
 
         for label, low, high in brackets:
             bracket_matches = [o for o in all_opps if low <= o['hedge'] <= high]
-            # SORTED BY PROFIT (DOLLARS WON)
             sorted_bracket = sorted(bracket_matches, key=lambda x: x['profit'], reverse=True)[:5]
-            
             if sorted_bracket:
                 st.subheader(label)
                 for op in sorted_bracket:
                     roi = (op['profit'] / max_wager) * 100
                     title = f"+${op['profit']:.2f} PROFIT | {op['sport']} | {op['time']}"
                     with st.expander(title):
-                        st.write(f"**{op['game']}**")
                         c1, c2, c3 = st.columns(3)
                         with c1:
                             st.caption(f"SOURCE: {op['s_book'].upper()}")
@@ -159,7 +152,7 @@ if run_scan:
                             st.metric("Net Profit", f"${op['profit']:.2f}")
                             st.caption(f"ROI: {roi:.1f}%")
 
-# --- MANUAL CALCULATOR ---
+# --- MANUAL CALCULATOR SECTION ---
 st.write("---")
 st.subheader("Manual Calculator")
 with st.expander("Open Manual Calculator", expanded=True):
@@ -172,13 +165,14 @@ with st.expander("Open Manual Calculator", expanded=True):
             m_boost = st.text_input("Boost %", value="50") if m_promo == "Profit Boost (%)" else "0"
         with m_col2:
             m_h_price = st.text_input("Hedge Odds", value="-280")
-            m_conv = st.text_input("Refund %", value="65") if m_promo == "No-Sweat Bet" else "0"
+            m_conv = st.text_input("Refund %", value="70") if m_promo == "No-Sweat Bet" else "0"
         
         if st.form_submit_button("Calculate Hedge", use_container_width=True):
             try:
                 ms_p, mw, mh_p = float(m_s_price), float(m_wager), float(m_h_price)
                 ms_m = (ms_p / 100) if ms_p > 0 else (100 / abs(ms_p))
                 mh_m = (mh_p / 100) if mh_p > 0 else (100 / abs(mh_p))
+                
                 if m_promo == "Profit Boost (%)":
                     boosted_m = ms_m * (1 + float(m_boost)/100)
                     m_h = round((mw * (1 + boosted_m)) / (1 + mh_m))
@@ -190,9 +184,11 @@ with st.expander("Open Manual Calculator", expanded=True):
                     mc = float(m_conv)/100 
                     m_h = round((mw * (ms_m + (1 - mc))) / (mh_m + 1))
                     m_p = min(((mw * ms_m) - m_h), ((m_h * mh_m) + (mw * mc) - mw))
+                
                 st.divider()
                 rc1, rc2, rc3 = st.columns(3)
                 rc1.metric("Hedge Amount", f"${m_h:.0f}")
                 rc2.metric("Net Profit", f"${m_p:.2f}")
                 rc3.metric("ROI", f"{((m_p/mw)*100):.1f}%")
-            except: st.error("Please enter valid numbers.")
+            except: 
+                st.error("Please enter valid numbers.")
