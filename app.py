@@ -9,16 +9,10 @@ st.set_page_config(page_title="Arb Terminal", layout="wide")
 st.markdown("""
     <style>
     .stApp { background-color: #f8f9fb; color: #1e1e1e; }
-    /* Standard Expander Style */
     div[data-testid="stExpander"] {
         background-color: #ffffff; border: 1px solid #d1d5db;
         border-radius: 12px; margin-bottom: 12px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    /* Highlight Top 3 Style */
-    .top-roi-box {
-        border: 3px solid #00ff88 !important;
-        box-shadow: 0 4px 12px rgba(0, 255, 136, 0.2) !important;
     }
     [data-testid="stMetricValue"] { 
         color: #008f51 !important; font-family: 'Courier New', monospace; font-weight: 800;
@@ -40,14 +34,29 @@ with st.container():
         with col1:
             promo_type = st.radio("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet"], horizontal=True)
         with col2:
-            source_book_display = st.radio("Source Book", ["DraftKings", "FanDuel", "BetMGM"], horizontal=True)
-            source_book = source_book_display.lower().replace(" ", "") 
+            # UPDATED: Added theScore Bet to Source Book
+            source_book_display = st.radio("Source Book", ["DraftKings", "FanDuel", "BetMGM", "theScore Bet"], horizontal=True)
+            source_map = {
+                "DraftKings": "draftkings", 
+                "FanDuel": "fanduel", 
+                "BetMGM": "betmgm", 
+                "theScore Bet": "espnbet" # Technical API Key
+            }
+            source_book = source_map[source_book_display]
+            
         with col_hedge:
-            hedge_book_display = st.radio("Hedge Filter", ["All Books", "DraftKings", "FanDuel", "BetMGM"], horizontal=True)
-            hedge_filter = hedge_book_display.lower().replace(" ", "")
+            # UPDATED: Added theScore Bet to Hedge Filter
+            hedge_book_display = st.radio("Hedge Filter", ["All Books", "DraftKings", "FanDuel", "theScore Bet"], horizontal=True)
+            hedge_map = {
+                "All Books": "allbooks", 
+                "DraftKings": "draftkings", 
+                "FanDuel": "fanduel", 
+                "theScore Bet": "espnbet"
+            }
+            hedge_filter = hedge_map[hedge_book_display]
 
         st.divider()
-        sport_labels = ["All Sports", "NBA", "NHL", "NFL", "NCAAB", "ATP", "WTA", "AusOpen(M)", "AusOpen(W)"]
+        sport_labels = ["All Sports", "NBA", "NHL", "NFL", "NCAAB", "ATP", "WTA"]
         col3, col4 = st.columns([3, 1])
         with col3:
             sport_cat = st.radio("Sport", sport_labels, horizontal=True)
@@ -70,18 +79,18 @@ if run_scan:
 
         sport_map = {
             "NBA": ["basketball_nba"], "NHL": ["icehockey_nhl"], "NFL": ["americanfootball_nfl"],
-            "NCAAB": ["basketball_ncaab"], "ATP": ["tennis_atp"], "WTA": ["tennis_wta"],
-            "AusOpen(M)": ["tennis_atp_aus_open_singles"], "AusOpen(W)": ["tennis_wta_aus_open_singles"]
+            "NCAAB": ["basketball_ncaab"], "ATP": ["tennis_atp"], "WTA": ["tennis_wta"]
         }
         
         sports_to_scan = [key for sublist in sport_map.values() for key in sublist] if sport_cat == "All Sports" else sport_map.get(sport_cat, [])
+        # BOOK_LIST includes espnbet to ensure it's pulled from the API
         BOOK_LIST = "draftkings,fanduel,betmgm,bet365,williamhill_us,fanatics,espnbet"
         all_opps, now_utc = [], datetime.now(timezone.utc)
 
         with st.spinner(f"Scanning {sport_cat}..."):
             for sport in sports_to_scan:
                 url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
-                params = {'apiKey': api_key, 'regions': 'us', 'markets': 'h2h', 'bookmakers': BOOK_LIST, 'oddsFormat': 'american'}
+                params = {'apiKey': api_key, 'regions': 'us,us2', 'markets': 'h2h', 'bookmakers': BOOK_LIST, 'oddsFormat': 'american'}
                 try:
                     res = requests.get(url, params=params)
                     quota_placeholder.markdown(f"**Quota Remaining:** :green[{res.headers.get('x-requests-remaining', 'N/A')}]")
@@ -89,6 +98,7 @@ if run_scan:
                         for game in res.json():
                             commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
                             if commence_time <= now_utc: continue 
+                            
                             source_odds, hedge_odds = [], []
                             for book in game['bookmakers']:
                                 for market in book['markets']:
@@ -102,6 +112,7 @@ if run_scan:
                                 if not opp_team: continue
                                 eligible_hedges = [h for h in hedge_odds if h['team'] == opp_team[0]]
                                 if not eligible_hedges: continue
+                                
                                 best_h = max(eligible_hedges, key=lambda x: x['price'])
                                 s_m = (s['price'] / 100) if s['price'] > 0 else (100 / abs(s['price']))
                                 h_m = (best_h['price'] / 100) if best_h['price'] > 0 else (100 / abs(best_h['price']))
@@ -114,7 +125,7 @@ if run_scan:
                                     h_needed = round((max_wager * s_m) / (1 + h_m))
                                     profit = min(((max_wager * s_m) - h_needed), (h_needed * h_m))
                                 else: 
-                                    mc = 0.70
+                                    mc = 0.70 # Default 70% conversion
                                     h_needed = round((max_wager * (s_m + (1 - mc))) / (h_m + 1))
                                     profit = min(((max_wager * s_m) - h_needed), ((h_needed * h_m) + (max_wager * mc) - max_wager))
 
@@ -130,41 +141,42 @@ if run_scan:
                                     })
                 except Exception as e: st.error(f"Error: {e}")
 
-        # IDENTIFY TOP 3 ROI
-        top_3_roi_values = sorted([o['roi'] for o in all_opps], reverse=True)[:3]
+        # --- RANKING FOR COLOR CODING ---
+        top_3_roi_thresholds = sorted([o['roi'] for o in all_opps], reverse=True)[:3]
 
-        st.write("### Top Scanned Opportunities")
-        brackets = [("Low Hedge ($0 - $50)", 0, 50), ("Medium Hedge ($51 - $150)", 51, 150), ("High Hedge ($151 - $250)", 151, 250), ("Ultra Hedge ($250+)", 251, 999999)]
-
-        for label, low, high in brackets:
-            bracket_matches = [o for o in all_opps if low <= o['hedge'] <= high]
-            sorted_bracket = sorted(bracket_matches, key=lambda x: x['profit'], reverse=True)[:5]
-            if sorted_bracket:
-                st.subheader(label)
-                for op in sorted_bracket:
-                    is_top_3 = op['roi'] in top_3_roi_values
-                    highlight_class = "top-roi-box" if is_top_3 else ""
-                    
-                    title = f"+${op['profit']:.2f} PROFIT | {op['sport']} | {op['time']}"
+        st.write("### Opportunities Found")
+        if not all_opps:
+            st.info("No matching opportunities found for this scan.")
+        else:
+            # Sort all opportunities by profit (highest first)
+            sorted_all = sorted(all_opps, key=lambda x: x['profit'], reverse=True)
+            
+            for op in sorted_all:
+                is_top_3 = op['roi'] in top_3_roi_thresholds
+                
+                # Title formatting
+                title = f"+${op['profit']:.2f} PROFIT | {op['sport']} | {op['time']}"
+                if is_top_3:
+                    title = f"🔥 TOP ROI {op['roi']:.1f}% | " + title
+                
+                # Display Expanders
+                with st.expander(title):
                     if is_top_3:
-                        title = f"⭐ TOP ROI: {op['roi']:.1f}% | " + title
+                        st.markdown(f"<p style='color:#008f51; font-weight:bold;'>PROFIT RANKED TOP 3 (ROI: {op['roi']:.1f}%)</p>", unsafe_allow_html=True)
                     
-                    with st.expander(title):
-                        if is_top_3:
-                            st.success(f"**TOP 3 ROI DETECTED: {op['roi']:.1f}%**")
-                        
-                        c1, c2, c3 = st.columns(3)
-                        with c1:
-                            st.caption(f"SOURCE: {op['s_book'].upper()}")
-                            st.info(f"Bet **${max_wager:.0f}** on {op['s_team']} @ **{op['s_price']:+}**")
-                        with c2:
-                            st.caption(f"HEDGE: {op['h_book'].upper()}")
-                            st.success(f"Bet **${op['hedge']:.0f}** on {op['h_team']} @ **{op['h_price']:+}**")
-                        with c3:
-                            st.metric("Net Profit", f"${op['profit']:.2f}")
-                            st.metric("ROI %", f"{op['roi']:.1f}%")
+                    st.write(f"**{op['game']}**")
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.caption(f"SOURCE: {op['s_book'].upper()}")
+                        st.info(f"Bet **${max_wager:.0f}** on {op['s_team']} @ **{op['s_price']:+}**")
+                    with c2:
+                        st.caption(f"HEDGE: {op['h_book'].upper()}")
+                        st.success(f"Bet **${op['hedge']:.0f}** on {op['h_team']} @ **{op['h_price']:+}**")
+                    with c3:
+                        st.metric("Net Profit", f"${op['profit']:.2f}")
+                        st.metric("ROI", f"{op['roi']:.1f}%")
 
-# --- MANUAL CALCULATOR (SAME AS PREVIOUS) ---
+# --- MANUAL CALCULATOR ---
 st.write("---")
 st.subheader("Manual Calculator")
 with st.expander("Open Manual Calculator", expanded=True):
