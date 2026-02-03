@@ -40,10 +40,12 @@ with st.container():
         with col1:
             promo_type = st.radio("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet"], horizontal=True)
         with col2:
-            source_book_display = st.radio("Source Book", ["DraftKings", "FanDuel", "BetMGM"], horizontal=True)
+            # ADDED: theScore Bet to the Source Book list
+            source_book_display = st.radio("Source Book", ["DraftKings", "FanDuel", "BetMGM", "theScore Bet"], horizontal=True)
             source_book = source_book_display.lower().replace(" ", "") 
         with col_hedge:
-            hedge_book_display = st.radio("Hedge Filter", ["All Books", "DraftKings", "FanDuel", "BetMGM"], horizontal=True)
+            # ADDED: theScore Bet to the Hedge Filter list
+            hedge_book_display = st.radio("Hedge Filter", ["All Books", "DraftKings", "FanDuel", "BetMGM", "theScore Bet"], horizontal=True)
             hedge_filter = hedge_book_display.lower().replace(" ", "")
 
         st.divider()
@@ -75,7 +77,9 @@ if run_scan:
         }
         
         sports_to_scan = [key for sublist in sport_map.values() for key in sublist] if sport_cat == "All Sports" else sport_map.get(sport_cat, [])
-        BOOK_LIST = "draftkings,fanduel,betmgm,bet365,williamhill_us,fanatics,espnbet"
+        
+        # UPDATED: Added thescore to the API bookmaker list
+        BOOK_LIST = "draftkings,fanduel,betmgm,bet365,williamhill_us,fanatics,espnbet,thescore"
         all_opps, now_utc = [], datetime.now(timezone.utc)
 
         with st.spinner(f"Scanning {sport_cat}..."):
@@ -164,7 +168,7 @@ if run_scan:
                             st.metric("Net Profit", f"${op['profit']:.2f}")
                             st.metric("ROI %", f"{op['roi']:.1f}%")
 
-# --- MANUAL CALCULATOR (SAME AS PREVIOUS) ---
+# --- MANUAL CALCULATOR ---
 st.write("---")
 st.subheader("Manual Calculator")
 with st.expander("Open Manual Calculator", expanded=True):
