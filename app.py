@@ -3,7 +3,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Arb Terminal", layout="wide")
+st.set_page_config(page_title="Arb Terminal | Olympics", layout="wide")
 
 # --- LIGHT TECH THEME ---
 st.markdown("""
@@ -24,7 +24,8 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- HEADER AREA ---
-st.title("Promo Converter")
+st.title("Olympic Promo Optimizer")
+st.caption("Scanning 5 days ahead for Milano Cortina 2026 Winter Games")
 quota_placeholder = st.empty()
 
 # --- INPUT AREA ---
@@ -51,8 +52,8 @@ with st.container():
             hedge_filter = "allbooks" if hedge_book_display == "All Books" else BOOK_MAP[hedge_book_display]
 
         st.divider()
-        # UPDATED: Added Olympic Sports Labels
-        sport_labels = ["All Sports", "Olympics-Hockey", "Olympics-Curling", "NBA", "NHL", "NFL", "NCAAB", "Tennis"]
+        # Focused Olympic list + 5-day scan window
+        sport_labels = ["Olympics (All H2H)", "NBA", "NHL", "NCAAB"]
         col3, col4 = st.columns([3, 1])
         with col3:
             sport_cat = st.radio("Sport", sport_labels, horizontal=True)
@@ -60,7 +61,7 @@ with st.container():
             max_wager_raw = st.text_input("Wager ($)", value="50.0")
 
         boost_val_raw = st.text_input("Boost (%)", value="50") if promo_type == "Profit Boost (%)" else "0"
-        run_scan = st.form_submit_button("Run Optimizer", use_container_width=True)
+        run_scan = st.form_submit_button("Run 5-Day Optimizer", use_container_width=True)
 
 # --- SCAN LOGIC ---
 if run_scan:
@@ -73,29 +74,39 @@ if run_scan:
         except:
             max_wager, boost_val = 50.0, 0.0
 
-        # UPDATED: Mapping for 2026 Winter Olympics H2H markets
+        # Define 5-day window for Olympics
+        now_utc = datetime.now(timezone.utc)
+        five_days_from_now = (now_utc + timedelta(days=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
         sport_map = {
             "NBA": ["basketball_nba"], 
             "NHL": ["icehockey_nhl"], 
-            "NFL": ["americanfootball_nfl"],
-            "NCAAB": ["basketball_ncaab"], 
-            "Tennis": ["tennis_atp", "tennis_wta"],
-            "Olympics-Hockey": ["icehockey_winter_olympics"], # 2026 Specific Key
-            "Olympics-Curling": ["curling_winter_olympics"]   # 2026 Specific Key
+            "NCAAB": ["basketball_ncaab"],
+            "Olympics (All H2H)": [
+                "icehockey_winter_olympics", 
+                "curling_winter_olympics",
+                "biathlon_winter_olympics",
+                "cross_country_skiing_winter_olympics"
+            ]
         }
         
-        if sport_cat == "All Sports":
-            sports_to_scan = [key for sublist in sport_map.values() for key in sublist]
-        else:
-            sports_to_scan = sport_map.get(sport_cat, [])
-        
+        sports_to_scan = sport_map.get(sport_cat, [])
         BOOK_LIST = "draftkings,fanduel,betmgm,bet365,williamhill_us,fanatics,espnbet"
-        all_opps, now_utc = [], datetime.now(timezone.utc)
+        all_opps = []
 
-        with st.spinner(f"Scanning {sport_cat}..."):
+        with st.spinner(f"Scanning {sport_cat} markets through {five_days_from_now}..."):
             for sport in sports_to_scan:
                 url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
-                params = {'apiKey': api_key, 'regions': 'us', 'markets': 'h2h', 'bookmakers': BOOK_LIST, 'oddsFormat': 'american'}
+                # ADDED: commenceTimeTo parameter to fetch 5 days of data
+                params = {
+                    'apiKey': api_key, 
+                    'regions': 'us', 
+                    'markets': 'h2h', 
+                    'bookmakers': BOOK_LIST, 
+                    'oddsFormat': 'american',
+                    'commenceTimeTo': five_days_from_now 
+                }
+                
                 try:
                     res = requests.get(url, params=params)
                     quota_placeholder.markdown(f"**Quota Remaining:** :green[{res.headers.get('x-requests-remaining', 'N/A')}]")
@@ -137,11 +148,11 @@ if run_scan:
                                     h_needed = round((max_wager * (s_m + (1 - mc))) / (h_m + 1))
                                     profit = min(((max_wager * s_m) - h_needed), ((h_needed * h_m) + (max_wager * mc) - max_wager))
 
-                                if profit > -10.0:
+                                if profit > -15.0: # Wide filter to capture future value
                                     roi = (profit / max_wager) * 100
                                     all_opps.append({
                                         "game": f"{game['away_team']} vs {game['home_team']}",
-                                        "sport": sport.upper().replace('ICEHOCKEY_','').replace('WINTER_',''),
+                                        "sport": sport.upper().replace('_WINTER_OLYMPICS',''),
                                         "time": (commence_time - timedelta(hours=6)).strftime("%m/%d %I:%M %p"),
                                         "profit": profit, "hedge": h_needed, "roi": roi,
                                         "s_team": s['team'], "s_book": s['book'], "s_price": s['price'],
@@ -150,12 +161,12 @@ if run_scan:
                 except Exception as e: st.error(f"Error: {e}")
 
         if not all_opps:
-            st.warning("No matches found for the selected Olympic sport. Check if the events are currently live in your region.")
+            st.warning("No Olympic matches found in the 5-day window. Note: ESPN Bet often posts Olympic lines 24-48 hours before the event.")
         else:
-            top_3_roi_values = sorted([o['roi'] for o in all_opps], reverse=True)[:3]
-            st.write(f"### Found {len(all_opps)} Opportunities")
+            all_opps = sorted(all_opps, key=lambda x: x['roi'], reverse=True)
+            st.write(f"### Scanned {len(all_opps)} Future Opportunities")
             for op in all_opps:
-                with st.expander(f"{op['game']} | Profit: ${op['profit']:.2f}"):
+                with st.expander(f"{op['time']} | {op['sport']} | ROI: {op['roi']:.1f}%"):
                     c1, c2, c3 = st.columns(3)
                     with c1:
                         st.caption(f"SOURCE: {op['s_book'].upper()}")
