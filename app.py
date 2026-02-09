@@ -3,7 +3,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Arb Terminal | Olympics", layout="wide")
+st.set_page_config(page_title="Arb Terminal | Multi-Sport", layout="wide")
 
 # --- LIGHT TECH THEME ---
 st.markdown("""
@@ -24,8 +24,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- HEADER AREA ---
-st.title("Olympic Promo Optimizer")
-st.caption("Scanning 5 days ahead for Milano Cortina 2026 Winter Games")
+st.title("Promo Optimizer")
 quota_placeholder = st.empty()
 
 # --- INPUT AREA ---
@@ -52,8 +51,8 @@ with st.container():
             hedge_filter = "allbooks" if hedge_book_display == "All Books" else BOOK_MAP[hedge_book_display]
 
         st.divider()
-        # Focused Olympic list + 5-day scan window
-        sport_labels = ["Olympics (All H2H)", "NBA", "NHL", "NCAAB"]
+        # "All Sports" is back!
+        sport_labels = ["All Sports", "Olympics (H2H)", "NBA", "NHL", "NCAAB", "Tennis"]
         col3, col4 = st.columns([3, 1])
         with col3:
             sport_cat = st.radio("Sport", sport_labels, horizontal=True)
@@ -61,7 +60,7 @@ with st.container():
             max_wager_raw = st.text_input("Wager ($)", value="50.0")
 
         boost_val_raw = st.text_input("Boost (%)", value="50") if promo_type == "Profit Boost (%)" else "0"
-        run_scan = st.form_submit_button("Run 5-Day Optimizer", use_container_width=True)
+        run_scan = st.form_submit_button("Run Full Optimizer", use_container_width=True)
 
 # --- SCAN LOGIC ---
 if run_scan:
@@ -74,15 +73,16 @@ if run_scan:
         except:
             max_wager, boost_val = 50.0, 0.0
 
-        # Define 5-day window for Olympics
+        # Define 5-day window for long-term Olympic events
         now_utc = datetime.now(timezone.utc)
-        five_days_from_now = (now_utc + timedelta(days=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        five_days_out = (now_utc + timedelta(days=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
         sport_map = {
             "NBA": ["basketball_nba"], 
             "NHL": ["icehockey_nhl"], 
             "NCAAB": ["basketball_ncaab"],
-            "Olympics (All H2H)": [
+            "Tennis": ["tennis_atp", "tennis_wta"],
+            "Olympics (H2H)": [
                 "icehockey_winter_olympics", 
                 "curling_winter_olympics",
                 "biathlon_winter_olympics",
@@ -90,21 +90,28 @@ if run_scan:
             ]
         }
         
-        sports_to_scan = sport_map.get(sport_cat, [])
+        # If "All Sports" is selected, combine everything in the map
+        if sport_cat == "All Sports":
+            sports_to_scan = [key for sublist in sport_map.values() for key in sublist]
+        else:
+            sports_to_scan = sport_map.get(sport_cat, [])
+        
         BOOK_LIST = "draftkings,fanduel,betmgm,bet365,williamhill_us,fanatics,espnbet"
         all_opps = []
 
-        with st.spinner(f"Scanning {sport_cat} markets through {five_days_from_now}..."):
+        with st.spinner(f"Scanning {sport_cat}..."):
             for sport in sports_to_scan:
+                # Use 5-day window for Olympic sports, standard 2-day window for others
+                scan_limit = five_days_out if "olympics" in sport else (now_utc + timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
+                
                 url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
-                # ADDED: commenceTimeTo parameter to fetch 5 days of data
                 params = {
                     'apiKey': api_key, 
                     'regions': 'us', 
                     'markets': 'h2h', 
                     'bookmakers': BOOK_LIST, 
                     'oddsFormat': 'american',
-                    'commenceTimeTo': five_days_from_now 
+                    'commenceTimeTo': scan_limit
                 }
                 
                 try:
@@ -127,7 +134,8 @@ if run_scan:
                                             hedge_odds.append(entry)
 
                             for s in source_odds:
-                                opp_team = [t for t in [game['home_team'], game['away_team']] if t != s['team']]
+                                teams = [game['away_team'], game['home_team']]
+                                opp_team = [t for t in teams if t != s['team']]
                                 if not opp_team: continue
                                 eligible_hedges = [h for h in hedge_odds if h['team'] == opp_team[0]]
                                 if not eligible_hedges: continue
@@ -136,6 +144,7 @@ if run_scan:
                                 s_m = (s['price'] / 100) if s['price'] > 0 else (100 / abs(s['price']))
                                 h_m = (best_h['price'] / 100) if best_h['price'] > 0 else (100 / abs(best_h['price']))
 
+                                # Calculation logic
                                 if promo_type == "Profit Boost (%)":
                                     boosted_s_m = s_m * (1 + (boost_val / 100))
                                     h_needed = round((max_wager * (1 + boosted_s_m)) / (1 + h_m))
@@ -144,27 +153,27 @@ if run_scan:
                                     h_needed = round((max_wager * s_m) / (1 + h_m))
                                     profit = min(((max_wager * s_m) - h_needed), (h_needed * h_m))
                                 else: 
-                                    mc = 0.70
+                                    mc = 0.70 # No-sweat bet refund conversion assumption
                                     h_needed = round((max_wager * (s_m + (1 - mc))) / (h_m + 1))
                                     profit = min(((max_wager * s_m) - h_needed), ((h_needed * h_m) + (max_wager * mc) - max_wager))
 
-                                if profit > -15.0: # Wide filter to capture future value
+                                if profit > -15.0:
                                     roi = (profit / max_wager) * 100
                                     all_opps.append({
                                         "game": f"{game['away_team']} vs {game['home_team']}",
-                                        "sport": sport.upper().replace('_WINTER_OLYMPICS',''),
+                                        "sport": sport.upper().replace('_WINTER_OLYMPICS','').replace('BASKETBALL_',''),
                                         "time": (commence_time - timedelta(hours=6)).strftime("%m/%d %I:%M %p"),
                                         "profit": profit, "hedge": h_needed, "roi": roi,
                                         "s_team": s['team'], "s_book": s['book'], "s_price": s['price'],
                                         "h_team": best_h['team'], "h_book": best_h['book'], "h_price": best_h['price']
                                     })
-                except Exception as e: st.error(f"Error: {e}")
+                except Exception as e: st.error(f"Error scanning {sport}: {e}")
 
         if not all_opps:
-            st.warning("No Olympic matches found in the 5-day window. Note: ESPN Bet often posts Olympic lines 24-48 hours before the event.")
+            st.warning("No matches found. Try changing the Source Book or Strategy.")
         else:
             all_opps = sorted(all_opps, key=lambda x: x['roi'], reverse=True)
-            st.write(f"### Scanned {len(all_opps)} Future Opportunities")
+            st.write(f"### Scanned {len(all_opps)} Opportunities")
             for op in all_opps:
                 with st.expander(f"{op['time']} | {op['sport']} | ROI: {op['roi']:.1f}%"):
                     c1, c2, c3 = st.columns(3)
