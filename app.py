@@ -34,7 +34,6 @@ with st.container():
         with col1:
             promo_type = st.radio("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet"], horizontal=True)
         
-        # FIXED MAPPING: theScore Bet now points to the 'espnbet' API key
         BOOK_MAP = {
             "DraftKings": "draftkings",
             "FanDuel": "fanduel",
@@ -52,7 +51,8 @@ with st.container():
             hedge_filter = "allbooks" if hedge_book_display == "All Books" else BOOK_MAP[hedge_book_display]
 
         st.divider()
-        sport_labels = ["All Sports", "NBA", "NHL", "NFL", "NCAAB", "ATP", "WTA", "AusOpen(M)", "AusOpen(W)"]
+        # UPDATED: Added Olympic Sports Labels
+        sport_labels = ["All Sports", "Olympics-Hockey", "Olympics-Curling", "NBA", "NHL", "NFL", "NCAAB", "Tennis"]
         col3, col4 = st.columns([3, 1])
         with col3:
             sport_cat = st.radio("Sport", sport_labels, horizontal=True)
@@ -73,15 +73,22 @@ if run_scan:
         except:
             max_wager, boost_val = 50.0, 0.0
 
+        # UPDATED: Mapping for 2026 Winter Olympics H2H markets
         sport_map = {
-            "NBA": ["basketball_nba"], "NHL": ["icehockey_nhl"], "NFL": ["americanfootball_nfl"],
-            "NCAAB": ["basketball_ncaab"], "ATP": ["tennis_atp"], "WTA": ["tennis_wta"],
-            "AusOpen(M)": ["tennis_atp_aus_open_singles"], "AusOpen(W)": ["tennis_wta_aus_open_singles"]
+            "NBA": ["basketball_nba"], 
+            "NHL": ["icehockey_nhl"], 
+            "NFL": ["americanfootball_nfl"],
+            "NCAAB": ["basketball_ncaab"], 
+            "Tennis": ["tennis_atp", "tennis_wta"],
+            "Olympics-Hockey": ["icehockey_winter_olympics"], # 2026 Specific Key
+            "Olympics-Curling": ["curling_winter_olympics"]   # 2026 Specific Key
         }
         
-        sports_to_scan = [key for sublist in sport_map.values() for key in sublist] if sport_cat == "All Sports" else sport_map.get(sport_cat, [])
+        if sport_cat == "All Sports":
+            sports_to_scan = [key for sublist in sport_map.values() for key in sublist]
+        else:
+            sports_to_scan = sport_map.get(sport_cat, [])
         
-        # Ensure 'espnbet' is in the request list
         BOOK_LIST = "draftkings,fanduel,betmgm,bet365,williamhill_us,fanatics,espnbet"
         all_opps, now_utc = [], datetime.now(timezone.utc)
 
@@ -92,6 +99,7 @@ if run_scan:
                 try:
                     res = requests.get(url, params=params)
                     quota_placeholder.markdown(f"**Quota Remaining:** :green[{res.headers.get('x-requests-remaining', 'N/A')}]")
+                    
                     if res.status_code == 200:
                         for game in res.json():
                             commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
@@ -133,7 +141,7 @@ if run_scan:
                                     roi = (profit / max_wager) * 100
                                     all_opps.append({
                                         "game": f"{game['away_team']} vs {game['home_team']}",
-                                        "sport": sport.upper().replace('TENNIS_',''),
+                                        "sport": sport.upper().replace('ICEHOCKEY_','').replace('WINTER_',''),
                                         "time": (commence_time - timedelta(hours=6)).strftime("%m/%d %I:%M %p"),
                                         "profit": profit, "hedge": h_needed, "roi": roi,
                                         "s_team": s['team'], "s_book": s['book'], "s_price": s['price'],
@@ -142,10 +150,19 @@ if run_scan:
                 except Exception as e: st.error(f"Error: {e}")
 
         if not all_opps:
-            st.warning("No matches found. This can happen if ESPN Bet (theScore) hasn't posted lines for the selected sport yet.")
+            st.warning("No matches found for the selected Olympic sport. Check if the events are currently live in your region.")
         else:
             top_3_roi_values = sorted([o['roi'] for o in all_opps], reverse=True)[:3]
             st.write(f"### Found {len(all_opps)} Opportunities")
             for op in all_opps:
                 with st.expander(f"{op['game']} | Profit: ${op['profit']:.2f}"):
-                    st.write(f"Source: {op['s_book']} | Hedge: {op['h_book']}")
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.caption(f"SOURCE: {op['s_book'].upper()}")
+                        st.info(f"Bet **${max_wager:.0f}** on {op['s_team']} @ **{op['s_price']:+}**")
+                    with c2:
+                        st.caption(f"HEDGE: {op['h_book'].upper()}")
+                        st.success(f"Bet **${op['hedge']:.0f}** on {op['h_team']} @ **{op['h_price']:+}**")
+                    with c3:
+                        st.metric("Net Profit", f"${op['profit']:.2f}")
+                        st.metric("ROI %", f"{op['roi']:.1f}%")
