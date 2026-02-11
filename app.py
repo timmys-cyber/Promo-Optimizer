@@ -51,7 +51,6 @@ with st.container():
             hedge_filter = "allbooks" if hedge_book_display == "All Books" else BOOK_MAP[hedge_book_display]
 
         st.divider()
-        # "All Sports" is back!
         sport_labels = ["All Sports", "Olympics (H2H)", "NBA", "NHL", "NCAAB", "Tennis"]
         col3, col4 = st.columns([3, 1])
         with col3:
@@ -73,7 +72,6 @@ if run_scan:
         except:
             max_wager, boost_val = 50.0, 0.0
 
-        # Define 5-day window for long-term Olympic events
         now_utc = datetime.now(timezone.utc)
         five_days_out = (now_utc + timedelta(days=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
@@ -90,7 +88,6 @@ if run_scan:
             ]
         }
         
-        # If "All Sports" is selected, combine everything in the map
         if sport_cat == "All Sports":
             sports_to_scan = [key for sublist in sport_map.values() for key in sublist]
         else:
@@ -101,23 +98,16 @@ if run_scan:
 
         with st.spinner(f"Scanning {sport_cat}..."):
             for sport in sports_to_scan:
-                # Use 5-day window for Olympic sports, standard 2-day window for others
                 scan_limit = five_days_out if "olympics" in sport else (now_utc + timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
-                
                 url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
                 params = {
-                    'apiKey': api_key, 
-                    'regions': 'us', 
-                    'markets': 'h2h', 
-                    'bookmakers': BOOK_LIST, 
-                    'oddsFormat': 'american',
-                    'commenceTimeTo': scan_limit
+                    'apiKey': api_key, 'regions': 'us', 'markets': 'h2h', 
+                    'bookmakers': BOOK_LIST, 'oddsFormat': 'american', 'commenceTimeTo': scan_limit
                 }
                 
                 try:
                     res = requests.get(url, params=params)
                     quota_placeholder.markdown(f"**Quota Remaining:** :green[{res.headers.get('x-requests-remaining', 'N/A')}]")
-                    
                     if res.status_code == 200:
                         for game in res.json():
                             commence_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
@@ -128,10 +118,8 @@ if run_scan:
                                 for market in book['markets']:
                                     for o in market['outcomes']:
                                         entry = {'book': book['title'], 'key': book['key'], 'team': o['name'], 'price': o['price']}
-                                        if book['key'] == source_book: 
-                                            source_odds.append(entry)
-                                        elif hedge_filter == "allbooks" or book['key'] == hedge_filter: 
-                                            hedge_odds.append(entry)
+                                        if book['key'] == source_book: source_odds.append(entry)
+                                        elif hedge_filter == "allbooks" or book['key'] == hedge_filter: hedge_odds.append(entry)
 
                             for s in source_odds:
                                 teams = [game['away_team'], game['home_team']]
@@ -144,7 +132,6 @@ if run_scan:
                                 s_m = (s['price'] / 100) if s['price'] > 0 else (100 / abs(s['price']))
                                 h_m = (best_h['price'] / 100) if best_h['price'] > 0 else (100 / abs(best_h['price']))
 
-                                # Calculation logic
                                 if promo_type == "Profit Boost (%)":
                                     boosted_s_m = s_m * (1 + (boost_val / 100))
                                     h_needed = round((max_wager * (1 + boosted_s_m)) / (1 + h_m))
@@ -153,7 +140,7 @@ if run_scan:
                                     h_needed = round((max_wager * s_m) / (1 + h_m))
                                     profit = min(((max_wager * s_m) - h_needed), (h_needed * h_m))
                                 else: 
-                                    mc = 0.70 # No-sweat bet refund conversion assumption
+                                    mc = 0.70
                                     h_needed = round((max_wager * (s_m + (1 - mc))) / (h_m + 1))
                                     profit = min(((max_wager * s_m) - h_needed), ((h_needed * h_m) + (max_wager * mc) - max_wager))
 
@@ -170,19 +157,44 @@ if run_scan:
                 except Exception as e: st.error(f"Error scanning {sport}: {e}")
 
         if not all_opps:
-            st.warning("No matches found. Try changing the Source Book or Strategy.")
+            st.warning("No matches found.")
         else:
-            all_opps = sorted(all_opps, key=lambda x: x['roi'], reverse=True)
-            st.write(f"### Scanned {len(all_opps)} Opportunities")
-            for op in all_opps:
-                with st.expander(f"{op['time']} | {op['sport']} | ROI: {op['roi']:.1f}%"):
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        st.caption(f"SOURCE: {op['s_book'].upper()}")
-                        st.info(f"Bet **${max_wager:.0f}** on {op['s_team']} @ **{op['s_price']:+}**")
-                    with c2:
-                        st.caption(f"HEDGE: {op['h_book'].upper()}")
-                        st.success(f"Bet **${op['hedge']:.0f}** on {op['h_team']} @ **{op['h_price']:+}**")
-                    with c3:
-                        st.metric("Net Profit", f"${op['profit']:.2f}")
-                        st.metric("ROI %", f"{op['roi']:.1f}%")
+            # --- RESULTS DISPLAY WITH BRACKETS & STARS ---
+            brackets = [
+                ("Low Hedge ($0 - $50)", 0, 50), 
+                ("Medium Hedge ($51 - $150)", 51, 150), 
+                ("High Hedge ($151+)", 151, 999999)
+            ]
+            
+            # Find the "Star" (Best ROI) per bracket
+            star_map = {}
+            for label, low, high in brackets:
+                b_matches = [o for o in all_opps if low <= o['hedge'] <= high]
+                if b_matches:
+                    star_map[label] = max(b_matches, key=lambda x: x['roi'])
+
+            for label, low, high in brackets:
+                b_matches = sorted([o for o in all_opps if low <= o['hedge'] <= high], key=lambda x: x['roi'], reverse=True)
+                if b_matches:
+                    st.subheader(label)
+                    for op in b_matches:
+                        is_star = star_map.get(label) == op
+                        star_prefix = "⭐ " if is_star else ""
+                        
+                        # Hedge Color Coding
+                        h_color = "green" if op['hedge'] <= 50 else "orange" if op['hedge'] <= 150 else "red"
+                        
+                        title = f"{star_prefix}+${op['profit']:.2f} PROFIT | {op['sport']} | {op['time']}"
+                        with st.expander(title):
+                            c1, c2, c3 = st.columns(3)
+                            with c1:
+                                st.caption(f"SOURCE: {op['s_book'].upper()}")
+                                st.info(f"Bet **${max_wager:.0f}** on {op['s_team']} @ **{op['s_price']:+}**")
+                            with c2:
+                                st.caption(f"HEDGE: {op['h_book'].upper()}")
+                                # Display total hedge amount with color coding
+                                st.markdown(f"Hedge Amount: :{h_color}[**${op['hedge']:.0f}**]")
+                                st.success(f"Bet on {op['h_team']} @ **{op['h_price']:+}**")
+                            with c3:
+                                st.metric("Net Profit", f"${op['profit']:.2f}")
+                                st.metric("ROI %", f"{op['roi']:.1f}%")
