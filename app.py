@@ -3,7 +3,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Arb Terminal | Multi-Sport", layout="wide")
+st.set_page_config(page_title="Arb Terminal | Hockey Focus", layout="wide")
 
 # --- LIGHT TECH THEME ---
 st.markdown("""
@@ -25,6 +25,7 @@ st.markdown("""
 
 # --- HEADER AREA ---
 st.title("Promo Optimizer")
+st.caption("2026 Winter Olympics: Men's & Women's Hockey Focus")
 quota_placeholder = st.empty()
 
 # --- INPUT AREA ---
@@ -34,7 +35,6 @@ with st.container():
         with col1:
             promo_type = st.radio("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet"], horizontal=True)
         
-        # theScore Bet maps to 'espnbet' API key
         BOOK_MAP = {
             "DraftKings": "draftkings",
             "FanDuel": "fanduel",
@@ -52,7 +52,8 @@ with st.container():
             hedge_filter = "allbooks" if hedge_book_display == "All Books" else BOOK_MAP[hedge_book_display]
 
         st.divider()
-        sport_labels = ["All Sports", "Olympics (H2H)", "NBA", "NHL", "NCAAB", "Tennis"]
+        # Updated Labels
+        sport_labels = ["All Sports", "Olympic Hockey", "NBA", "NHL", "NCAAB", "Tennis"]
         col3, col4 = st.columns([3, 1])
         with col3:
             sport_cat = st.radio("Sport", sport_labels, horizontal=True)
@@ -74,18 +75,17 @@ if run_scan:
             max_wager, boost_val = 50.0, 0.0
 
         now_utc = datetime.now(timezone.utc)
-        five_days_out = (now_utc + timedelta(days=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        scan_limit = (now_utc + timedelta(days=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
+        # Focusing specifically on Men's and Women's Hockey Keys
         sport_map = {
             "NBA": ["basketball_nba"], 
             "NHL": ["icehockey_nhl"], 
             "NCAAB": ["basketball_ncaab"],
             "Tennis": ["tennis_atp", "tennis_wta"],
-            "Olympics (H2H)": [
-                "icehockey_winter_olympics", 
-                "curling_winter_olympics",
-                "biathlon_winter_olympics",
-                "cross_country_skiing_winter_olympics"
+            "Olympic Hockey": [
+                "icehockey_winter_olympics",         # Men's
+                "icehockey_winter_olympics_womens"   # Women's
             ]
         }
         
@@ -99,9 +99,6 @@ if run_scan:
 
         with st.spinner(f"Scanning {sport_cat}..."):
             for sport in sports_to_scan:
-                # 5-day limit for Olympics, 2-day for standard sports
-                scan_limit = five_days_out if "olympics" in sport else (now_utc + timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
-                
                 url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
                 params = {
                     'apiKey': api_key, 'regions': 'us', 'markets': 'h2h', 
@@ -125,7 +122,7 @@ if run_scan:
                                         elif hedge_filter == "allbooks" or book['key'] == hedge_filter: hedge_odds.append(entry)
 
                             for s in source_odds:
-                                opp_team = [t for t in [game['away_team'], game['home_team']] if t != s['team']]
+                                opp_team = [t for t in [game['home_team'], game['away_team']] if t != s['team']]
                                 if not opp_team: continue
                                 eligible_hedges = [h for h in hedge_odds if h['team'] == opp_team[0]]
                                 if not eligible_hedges: continue
@@ -150,7 +147,7 @@ if run_scan:
                                     roi = (profit / max_wager) * 100
                                     all_opps.append({
                                         "game": f"{game['away_team']} vs {game['home_team']}",
-                                        "sport": sport.upper().replace('_WINTER_OLYMPICS','').replace('BASKETBALL_',''),
+                                        "sport": "OLYMPIC HOCKEY" if "olympics" in sport else sport.upper().replace('BASKETBALL_',''),
                                         "time": (commence_time - timedelta(hours=6)).strftime("%m/%d %I:%M %p"),
                                         "profit": profit, "hedge": h_needed, "roi": roi,
                                         "s_team": s['team'], "s_book": s['book'], "s_price": s['price'],
@@ -159,11 +156,9 @@ if run_scan:
                 except Exception as e: st.error(f"Error scanning {sport}: {e}")
 
         if not all_opps:
-            st.warning("No matches found.")
+            st.warning("No matches found. Note: H2H lines for Olympic Hockey are typically posted 48-72 hours before puck drop.")
         else:
-            # 1. Identify Global Top 3 across all categories
             global_top_3 = sorted(all_opps, key=lambda x: x['roi'], reverse=True)[:3]
-            
             st.write(f"### Found {len(all_opps)} Opportunities | ⭐ = Top 3 Overall")
 
             brackets = [
@@ -175,14 +170,11 @@ if run_scan:
             for label, low, high in brackets:
                 b_matches = sorted([o for o in all_opps if low <= o['hedge'] <= high], 
                                    key=lambda x: x['roi'], reverse=True)
-                
-                # Only show top 3 per group
                 display_matches = b_matches[:3]
                 
                 if display_matches:
                     st.subheader(label)
                     for op in display_matches:
-                        # 2. Check for Global Star status
                         is_global_top = any(
                             op['game'] == top['game'] and 
                             op['s_price'] == top['s_price'] and 
@@ -190,10 +182,7 @@ if run_scan:
                             for top in global_top_3
                         )
                         star_prefix = "⭐ " if is_global_top else ""
-                        
-                        # Hedge Color Coding
                         h_color = "green" if op['hedge'] <= 50 else "orange" if op['hedge'] <= 150 else "red"
-                        
                         title = f"{star_prefix}+${op['profit']:.2f} PROFIT | {op['sport']} | {op['time']}"
                         
                         with st.expander(title):
