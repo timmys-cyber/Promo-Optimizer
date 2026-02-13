@@ -17,6 +17,20 @@ st.markdown("""
 st.title("🥇 Olympic & Pro Optimizer")
 quota_placeholder = st.empty()
 
+# --- BOOK CONFIGURATION ---
+# Mapping readable names to The Odds API keys
+# Note: Caesars uses 'williamhill_us', theScore Bet uses 'espnbet'
+BOOK_MAP = {
+    "FanDuel": "fanduel",
+    "DraftKings": "draftkings",
+    "theScore Bet": "espnbet",
+    "Bet365": "bet365",
+    "BetMGM": "betmgm",
+    "Caesars": "williamhill_us",
+    "Fanatics": "fanatics"
+}
+ALLOWED_BOOKS = list(BOOK_MAP.keys())
+
 # --- INPUT PANEL ---
 with st.form("settings"):
     c1, c2, c3 = st.columns(3)
@@ -24,24 +38,14 @@ with st.form("settings"):
         promo_type = st.selectbox("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet"])
         max_wager = st.number_input("Wager Amount ($)", value=50.0)
     with c2:
-        # Removed Bovada/Offshore options here
-        source_book_name = st.selectbox("Source Book", ["DraftKings", "FanDuel", "BetMGM", "theScore Bet"])
+        source_book_name = st.selectbox("Source Book", ALLOWED_BOOKS)
         boost_val = st.number_input("Boost %", value=50) if promo_type == "Profit Boost (%)" else 0
     with c3:
-        # Removed Bovada/Offshore options here
-        hedge_filter_name = st.selectbox("Hedge Filter", ["All Books", "DraftKings", "FanDuel", "BetMGM", "theScore Bet"])
+        hedge_filter_name = st.selectbox("Hedge Filter", ["All Allowed Books"] + ALLOWED_BOOKS)
         sport_cat = st.selectbox("Sport Category", ["Olympic Hockey", "All Sports", "NBA", "NHL", "NCAAB"])
 
-    # Mapping for API (Explicitly US-regulated books)
-    BOOK_MAP = {
-        "DraftKings": "draftkings", 
-        "FanDuel": "fanduel", 
-        "BetMGM": "betmgm", 
-        "theScore Bet": "espnbet"
-    }
-    
     source_book = BOOK_MAP[source_book_name]
-    hedge_filter = "allbooks" if hedge_filter_name == "All Books" else BOOK_MAP[hedge_filter_name]
+    hedge_filter = "all" if hedge_filter_name == "All Allowed Books" else BOOK_MAP[hedge_filter_name]
     
     run_scan = st.form_submit_button("Run Full Scan", use_container_width=True)
 
@@ -53,12 +57,8 @@ if run_scan:
     else:
         now = datetime.now(timezone.utc)
         
-        # 2026 Olympic Hockey Specific Keys
         sport_map = {
-            "Olympic Hockey": [
-                "icehockey_winter_olympics", 
-                "icehockey_winter_olympics_womens"
-            ],
+            "Olympic Hockey": ["icehockey_winter_olympics", "icehockey_winter_olympics_womens"],
             "NBA": ["basketball_nba"],
             "NHL": ["icehockey_nhl"],
             "NCAAB": ["basketball_ncaab"],
@@ -68,14 +68,16 @@ if run_scan:
         target_sports = sport_map.get(sport_cat, [])
         all_opps = []
         
+        # Define the set of internal keys we care about for filtering
+        allowed_keys = set(BOOK_MAP.values())
+
         with st.spinner(f"Searching for {sport_cat} lines..."):
             for sport in target_sports:
-                # Checking H2H and 3-Way (Regulation) markets
                 for market in ["h2h", "h2h_3_way"]:
                     url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
                     params = {
                         'apiKey': api_key, 
-                        'regions': 'us', # 'us' region automatically excludes Bovada
+                        'regions': 'us', 
                         'markets': market,
                         'oddsFormat': 'american'
                     }
@@ -87,26 +89,28 @@ if run_scan:
                             quota_placeholder.info(f"Requests Left: {res.headers.get('x-requests-remaining')}")
                             
                             for game in data:
-                                # Time Check
                                 g_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
                                 if g_time < now - timedelta(hours=3): continue 
                                 
-                                # Extract Odds
                                 s_odds, h_odds = [], []
                                 for bm in game['bookmakers']:
-                                    # Source side logic
+                                    # Skip any book not in our allowed list
+                                    if bm['key'] not in allowed_keys:
+                                        continue
+
+                                    # Identify Source Odds
                                     if bm['key'] == source_book:
                                         for m in bm['markets']:
                                             for out in m['outcomes']:
                                                 s_odds.append({'team': out['name'], 'price': out['price'], 'book': bm['title']})
                                     
-                                    # Hedge side logic (must be a US book per the filter)
-                                    elif hedge_filter == "allbooks" or bm['key'] == hedge_filter:
+                                    # Identify Hedge Odds
+                                    if hedge_filter == "all" or bm['key'] == hedge_filter:
                                         for m in bm['markets']:
                                             for out in m['outcomes']:
                                                 h_odds.append({'team': out['name'], 'price': out['price'], 'book': bm['title']})
 
-                                # Match Teams & Calculate
+                                # Calculation Logic
                                 for s in s_odds:
                                     best_h = None
                                     for h in h_odds:
@@ -115,7 +119,6 @@ if run_scan:
                                                 best_h = h
                                     
                                     if best_h:
-                                        # Conversion and Math Logic
                                         s_m = s['price']/100 if s['price']>0 else 100/abs(s['price'])
                                         h_m = best_h['price']/100 if best_h['price']>0 else 100/abs(best_h['price'])
                                         
@@ -144,7 +147,7 @@ if run_scan:
 
         # --- DISPLAY RESULTS ---
         if not all_opps:
-            st.warning("No qualifying lines found. Check your API quota or Sport Category.")
+            st.warning("No lines found within the selected books.")
         else:
             global_top_3 = sorted(all_opps, key=lambda x: x['roi'], reverse=True)[:3]
             brackets = [("Low Hedge ($0-$50)", 0, 50), ("Med Hedge ($51-$150)", 51, 150), ("High Hedge ($151+)", 151, 9999)]
