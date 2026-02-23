@@ -3,23 +3,39 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Arb Terminal | Olympic Focus", layout="wide")
+st.set_page_config(page_title="Arb Terminal | H2H Pro", layout="wide")
 
 # --- CUSTOM CSS ---
 st.markdown("""
     <style>
     .stApp { background-color: #f8f9fb; }
-    div[data-testid="stExpander"] { background-color: white; border-radius: 10px; }
-    .stMetric { background-color: #ffffff; padding: 10px; border-radius: 10px; border: 1px solid #eee; }
+    div[data-testid="stExpander"] { background-color: white; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #eee; }
+    
+    /* Remove the +/- spinners from number inputs */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+    input[type=number] {
+        -moz-appearance: textfield;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🥇 Olympic & Pro Optimizer")
+# --- HELPER FUNCTIONS ---
+def convert_american_to_decimal(american_odds):
+    if american_odds > 0:
+        return (american_odds / 100) + 1
+    else:
+        return (100 / abs(american_odds)) + 1
+
+# --- TITLE ---
+st.title("📉 Two-Way Market Optimizer (No Ties)")
 quota_placeholder = st.empty()
 
 # --- BOOK CONFIGURATION ---
-# Mapping readable names to The Odds API keys
-# Note: Caesars uses 'williamhill_us', theScore Bet uses 'espnbet'
 BOOK_MAP = {
     "FanDuel": "fanduel",
     "DraftKings": "draftkings",
@@ -32,138 +48,151 @@ BOOK_MAP = {
 ALLOWED_BOOKS = list(BOOK_MAP.keys())
 
 # --- INPUT PANEL ---
-with st.form("settings"):
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        promo_type = st.selectbox("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet"])
-        max_wager = st.number_input("Wager Amount ($)", value=50.0)
-    with c2:
+with st.sidebar:
+    st.header("Search Settings")
+    with st.form("settings"):
+        promo_type = st.selectbox("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet", "Standard Arb"])
+        
+        max_wager = st.number_input("Source Wager ($)", value=50.0, step=None)
+        
+        boost_val = 0
+        if promo_type == "Profit Boost (%)":
+            boost_val = st.number_input("Boost Percentage (%)", value=50, step=None)
+            
         source_book_name = st.selectbox("Source Book", ALLOWED_BOOKS)
-        boost_val = st.number_input("Boost %", value=50) if promo_type == "Profit Boost (%)" else 0
-    with c3:
-        hedge_filter_name = st.selectbox("Hedge Filter", ["All Allowed Books"] + ALLOWED_BOOKS)
-        sport_cat = st.selectbox("Sport Category", ["Olympic Hockey", "All Sports", "NBA", "NHL", "NCAAB"])
-
-    source_book = BOOK_MAP[source_book_name]
-    hedge_filter = "all" if hedge_filter_name == "All Allowed Books" else BOOK_MAP[hedge_filter_name]
-    
-    run_scan = st.form_submit_button("Run Full Scan", use_container_width=True)
+        hedge_filter_name = st.selectbox("Hedge Filter", ["All Other Books"] + ALLOWED_BOOKS)
+        
+        # CATEGORIES EXCLUDING TIE-PRONE SPORTS
+        sport_cat = st.selectbox("Sport Category", [
+            "All H2H Sports", "NBA", "NHL", "MLB", "UFC / MMA", "Tennis", "NCAAB"
+        ])
+        
+        min_roi = st.slider("Min ROI %", -2.0, 20.0, 0.0)
+        
+        run_scan = st.form_submit_button("Run Live Scan", use_container_width=True)
 
 # --- SCANNER LOGIC ---
 if run_scan:
     api_key = st.secrets.get("ODDS_API_KEY")
     if not api_key:
-        st.error("Missing API Key in Secrets!")
+        st.error("Please add your API Key (ODDS_API_KEY) to Streamlit Secrets.")
     else:
         now = datetime.now(timezone.utc)
+        source_book_key = BOOK_MAP[source_book_name]
         
+        # Sport Map excluding Soccer/Tie-prone sports
         sport_map = {
-            "Olympic Hockey": ["icehockey_winter_olympics", "icehockey_winter_olympics_womens"],
             "NBA": ["basketball_nba"],
             "NHL": ["icehockey_nhl"],
+            "MLB": ["baseball_mlb"],
+            "UFC / MMA": ["mma_mixed_martial_arts"],
+            "Tennis": ["tennis_atp_aus_open", "tennis_atp_french_open", "tennis_atp_wimbledon", "tennis_atp_us_open"],
             "NCAAB": ["basketball_ncaab"],
-            "All Sports": ["icehockey_winter_olympics", "icehockey_nhl", "basketball_nba", "basketball_ncaab"]
+            "All H2H Sports": ["basketball_nba", "icehockey_nhl", "baseball_mlb", "mma_mixed_martial_arts", "basketball_ncaab"]
         }
         
         target_sports = sport_map.get(sport_cat, [])
         all_opps = []
-        
-        # Define the set of internal keys we care about for filtering
-        allowed_keys = set(BOOK_MAP.values())
 
-        with st.spinner(f"Searching for {sport_cat} lines..."):
+        with st.spinner(f"Scanning upcoming {sport_cat} matches..."):
             for sport in target_sports:
-                for market in ["h2h", "h2h_3_way"]:
-                    url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
-                    params = {
-                        'apiKey': api_key, 
-                        'regions': 'us', 
-                        'markets': market,
-                        'oddsFormat': 'american'
-                    }
-                    
-                    try:
-                        res = requests.get(url, params=params)
-                        if res.status_code == 200:
-                            data = res.json()
-                            quota_placeholder.info(f"Requests Left: {res.headers.get('x-requests-remaining')}")
+                # STRICTLY using 'h2h' market to avoid 3-way (Draw) outcomes
+                url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
+                params = {
+                    'apiKey': api_key, 
+                    'regions': 'us', 
+                    'markets': 'h2h', 
+                    'oddsFormat': 'american'
+                }
+                
+                try:
+                    res = requests.get(url, params=params)
+                    if res.status_code == 200:
+                        data = res.json()
+                        quota_placeholder.info(f"API Quota Remaining: {res.headers.get('x-requests-remaining')}")
+                        
+                        for game in data:
+                            g_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
                             
-                            for game in data:
-                                g_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
-                                if g_time < now - timedelta(hours=3): continue 
+                            # Filter: Future games only (2 min buffer)
+                            if g_time < now + timedelta(minutes=2): 
+                                continue 
+                            
+                            source_prices, hedge_prices = [], []
+                            
+                            for bm in game['bookmakers']:
+                                if bm['key'] == source_book_key:
+                                    # Ensure we only grab outcomes from the h2h market
+                                    for market in bm['markets']:
+                                        if market['key'] == 'h2h':
+                                            for out in market['outcomes']:
+                                                source_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
                                 
-                                s_odds, h_odds = [], []
-                                for bm in game['bookmakers']:
-                                    # Skip any book not in our allowed list
-                                    if bm['key'] not in allowed_keys:
-                                        continue
+                                elif (hedge_filter_name == "All Other Books" and bm['key'] in BOOK_MAP.values()) or (bm['key'] == BOOK_MAP.get(hedge_filter_name)):
+                                    for market in bm['markets']:
+                                        if market['key'] == 'h2h':
+                                            for out in market['outcomes']:
+                                                hedge_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
 
-                                    # Identify Source Odds
-                                    if bm['key'] == source_book:
-                                        for m in bm['markets']:
-                                            for out in m['outcomes']:
-                                                s_odds.append({'team': out['name'], 'price': out['price'], 'book': bm['title']})
+                            # Math Logic
+                            for s in source_prices:
+                                best_h = None
+                                for h in hedge_prices:
+                                    if h['team'] != s['team'] and h['key'] != s['key']:
+                                        if not best_h or h['price'] > best_h['price']:
+                                            best_h = h
+                                
+                                if best_h:
+                                    s_dec = convert_american_to_decimal(s['price'])
+                                    h_dec = convert_american_to_decimal(best_h['price'])
                                     
-                                    # Identify Hedge Odds
-                                    if hedge_filter == "all" or bm['key'] == hedge_filter:
-                                        for m in bm['markets']:
-                                            for out in m['outcomes']:
-                                                h_odds.append({'team': out['name'], 'price': out['price'], 'book': bm['title']})
+                                    if promo_type == "Profit Boost (%)":
+                                        boost_mult = 1 + (boost_val / 100)
+                                        s_dec_boosted = 1 + ((s_dec - 1) * boost_mult)
+                                        h_wager = (max_wager * s_dec_boosted) / h_dec
+                                        profit = (max_wager * s_dec_boosted) - (max_wager + h_wager)
+                                    elif promo_type == "Bonus Bet":
+                                        s_dec_bonus = s_dec - 1
+                                        h_wager = (max_wager * s_dec_bonus) / h_dec
+                                        profit = (max_wager * s_dec_bonus) - h_wager
+                                    elif promo_type == "No-Sweat Bet":
+                                        # Standard 70% conversion assumption
+                                        h_wager = (max_wager * (s_dec - 0.3)) / h_dec
+                                        profit = (max_wager * (s_dec - 1)) - h_wager
+                                    else: # Standard Arb
+                                        h_wager = (max_wager * s_dec) / h_dec
+                                        profit = (max_wager * s_dec) - (max_wager + h_wager)
 
-                                # Calculation Logic
-                                for s in s_odds:
-                                    best_h = None
-                                    for h in h_odds:
-                                        if h['team'] != s['team']:
-                                            if not best_h or h['price'] > best_h['price']:
-                                                best_h = h
-                                    
-                                    if best_h:
-                                        s_m = s['price']/100 if s['price']>0 else 100/abs(s['price'])
-                                        h_m = best_h['price']/100 if best_h['price']>0 else 100/abs(best_h['price'])
-                                        
-                                        if promo_type == "Profit Boost (%)":
-                                            b_s_m = s_m * (1 + (boost_val/100))
-                                            h_amt = (max_wager * (1 + b_s_m)) / (1 + h_m)
-                                            profit = (max_wager * b_s_m) - h_amt
-                                        elif promo_type == "Bonus Bet":
-                                            h_amt = (max_wager * s_m) / (1 + h_m)
-                                            profit = (max_wager * s_m) - h_amt
-                                        else: # No Sweat
-                                            h_amt = (max_wager * (s_m + 0.3)) / (h_m + 1)
-                                            profit = (max_wager * s_m) - h_amt
+                                    roi = (profit / max_wager) * 100
+                                    if roi >= min_roi:
+                                        all_opps.append({
+                                            "sport": sport.upper().replace('_', ' '),
+                                            "game": f"{game['away_team']} vs {game['home_team']}",
+                                            "time": g_time.strftime("%m/%d %I:%M %p"),
+                                            "profit": profit, "roi": roi,
+                                            "s_team": s['team'], "s_price": s['price'], "s_book": s['book'],
+                                            "h_team": best_h['team'], "h_price": best_h['price'], "h_book": best_h['book'],
+                                            "h_wager": h_wager
+                                        })
+                except: continue
 
-                                        if profit > -10:
-                                            all_opps.append({
-                                                "sport": "OLYMPIC HOCKEY" if "olympic" in sport else sport.split('_')[-1].upper(),
-                                                "game": f"{game['away_team']} vs {game['home_team']}",
-                                                "time": g_time.strftime("%m/%d %I:%M %p"),
-                                                "profit": profit, "roi": (profit/max_wager)*100,
-                                                "s_team": s['team'], "s_price": s['price'], "s_book": s['book'],
-                                                "h_team": best_h['team'], "h_price": best_h['price'], "h_book": best_h['book'],
-                                                "hedge": h_amt
-                                            })
-                    except: continue
-
-        # --- DISPLAY RESULTS ---
+        # --- DISPLAY ---
         if not all_opps:
-            st.warning("No lines found within the selected books.")
+            st.warning("No future two-way opportunities found.")
         else:
-            global_top_3 = sorted(all_opps, key=lambda x: x['roi'], reverse=True)[:3]
-            brackets = [("Low Hedge ($0-$50)", 0, 50), ("Med Hedge ($51-$150)", 51, 150), ("High Hedge ($151+)", 151, 9999)]
+            sorted_opps = sorted(all_opps, key=lambda x: x['roi'], reverse=True)
+            st.subheader("🔥 Top 3 H2H Opportunities")
+            for i, op in enumerate(sorted_opps[:3]):
+                with st.expander(f"⭐ #{i+1} | {op['sport']} | {op['game']} | ROI: {op['roi']:.1f}%"):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric(f"Source: {op['s_book']}", f"{op['s_price']}", f"Bet ${max_wager:.0f}")
+                    c2.metric(f"Hedge: {op['h_book']}", f"{op['h_price']}", f"Bet ${op['h_wager']:.2f}")
+                    c3.metric("Profit", f"${op['profit']:.2f}", f"{op['roi']:.1f}% ROI")
+                    st.caption(f"Starts: {op['time']}")
             
-            for label, low, high in brackets:
-                matches = sorted([o for o in all_opps if low <= o['hedge'] <= high], key=lambda x: x['roi'], reverse=True)[:3]
-                if matches:
-                    st.subheader(label)
-                    for op in matches:
-                        is_star = any(op['game'] == t['game'] and op['roi'] == t['roi'] for t in global_top_3)
-                        star = "⭐ " if is_star else ""
-                        with st.expander(f"{star}{op['sport']} | {op['game']} | +${op['profit']:.2f}"):
-                            c1, c2, c3 = st.columns(3)
-                            c1.metric("Source", f"{op['s_book']}", f"{op['s_price']:+}")
-                            c1.caption(f"Bet ${max_wager} on {op['s_team']}")
-                            c2.metric("Hedge", f"{op['h_book']}", f"{op['h_price']:+}")
-                            c2.caption(f"Bet ${op['hedge']:.0f} on {op['h_team']}")
-                            c3.metric("ROI", f"{op['roi']:.1f}%")
-                            c3.write(f"**Time:** {op['time']}")
+            if len(sorted_opps) > 3:
+                st.write("---")
+                for op in sorted_opps[3:]:
+                    with st.expander(f"{op['sport']} | {op['game']} | ROI: {op['roi']:.1f}%"):
+                        st.write(f"**{op['s_book']}** {op['s_price']:+} vs **{op['h_book']}** {op['h_price']:+}")
+                        st.write(f"Bet **${max_wager:.0f}** / **${op['h_wager']:.2f}** | Profit: **${op['profit']:.2f}**")
