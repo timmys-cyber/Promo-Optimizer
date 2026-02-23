@@ -8,7 +8,7 @@ st.set_page_config(page_title="Sportsbook Moneymaker", layout="wide", initial_si
 # --- CUSTOM CSS ---
 st.markdown("""
     <style>
-    /* Permanently hide the sidebar and menu items for a cleaner look */
+    /* Hide sidebar and menu */
     [data-testid="stSidebar"] { display: none; }
     [data-testid="collapsedControl"] { display: none; }
     
@@ -33,9 +33,21 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- HELPER FUNCTIONS ---
+# --- CONSTANTS & HELPERS ---
 def convert_american_to_decimal(american_odds):
     return (american_odds / 100) + 1 if american_odds > 0 else (100 / abs(american_odds)) + 1
+
+BOOK_MAP = {
+    "All": "all",
+    "FanDuel": "fanduel",
+    "DraftKings": "draftkings",
+    "theScore Bet": "espnbet",
+    "Bet365": "bet365",
+    "BetMGM": "betmgm",
+    "Caesars": "williamhill_us",
+    "Fanatics": "fanatics"
+}
+BOOK_NAMES = list(BOOK_MAP.keys())
 
 # --- TITLE ---
 st.title("💰 Sportsbook Moneymaker")
@@ -47,20 +59,20 @@ with st.container():
     with row1_c1:
         promo_type = st.selectbox("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet", "Standard Arb"])
     with row1_c2:
-        # step=None and CSS above ensure this is a clean free-text box
         max_wager = st.number_input("Source Wager ($)", value=50.0, step=None)
     with row1_c3:
-        source_book_name = st.selectbox("Source Book", ["FanDuel", "DraftKings", "theScore Bet", "Bet365", "BetMGM", "Caesars", "Fanatics"])
+        source_book_name = st.selectbox("Source Book", BOOK_NAMES, index=0)
     with row1_c4:
-        sport_cat = st.selectbox("Sport Category", ["All H2H Sports", "NBA", "NHL", "MLB", "UFC / MMA", "Tennis", "NCAAB"])
+        hedge_book_name = st.selectbox("Hedge Book", BOOK_NAMES, index=0)
 
-    # Bottom Row for Boost & Execution
-    row2_c1, row2_c2 = st.columns([1, 3])
+    # Bottom Row for Boost, Sport & Execution
+    row2_c1, row2_c2, row2_c3 = st.columns([1, 1, 2])
     with row2_c1:
-        # step=None ensures no plus/minus controls on the boost input
         boost_val = st.number_input("Boost %", value=50, step=None) if promo_type == "Profit Boost (%)" else 0
     with row2_c2:
-        st.write("") # Spacer
+        sport_cat = st.selectbox("Sport Category", ["All H2H Sports", "NBA", "NHL", "MLB", "UFC / MMA", "Tennis", "NCAAB"])
+    with row2_c3:
+        st.write("") # Vertical alignment spacer
         run_scan = st.button("🚀 Run Live Scan", use_container_width=True)
 
 # --- SCANNER LOGIC ---
@@ -70,8 +82,6 @@ if run_scan:
         st.error("Please add your API Key to Streamlit Secrets.")
     else:
         now = datetime.now(timezone.utc)
-        BOOK_MAP = {"FanDuel": "fanduel", "DraftKings": "draftkings", "theScore Bet": "espnbet", "Bet365": "bet365", "BetMGM": "betmgm", "Caesars": "williamhill_us", "Fanatics": "fanatics"}
-        source_book_key = BOOK_MAP[source_book_name]
         
         sport_map = {
             "NBA": ["basketball_nba"], "NHL": ["icehockey_nhl"], "MLB": ["baseball_mlb"], "UFC / MMA": ["mma_mixed_martial_arts"],
@@ -97,12 +107,18 @@ if run_scan:
                             
                             source_prices, hedge_prices = [], []
                             for bm in game['bookmakers']:
-                                if bm['key'] == source_book_key:
+                                # Logic for "All" vs Specific Source Book
+                                is_source = (source_book_name == "All" and bm['key'] in BOOK_MAP.values()) or (bm['key'] == BOOK_MAP[source_book_name])
+                                # Logic for "All" vs Specific Hedge Book
+                                is_hedge = (hedge_book_name == "All" and bm['key'] in BOOK_MAP.values()) or (bm['key'] == BOOK_MAP[hedge_book_name])
+
+                                if is_source:
                                     for market in bm['markets']:
                                         if market['key'] == 'h2h':
                                             for out in market['outcomes']:
                                                 source_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
-                                elif bm['key'] != source_book_key and bm['key'] in BOOK_MAP.values():
+                                
+                                if is_hedge:
                                     for market in bm['markets']:
                                         if market['key'] == 'h2h':
                                             for out in market['outcomes']:
@@ -111,14 +127,14 @@ if run_scan:
                             for s in source_prices:
                                 best_h = None
                                 for h in hedge_prices:
-                                    if h['team'] != s['team']:
+                                    # Ensure we aren't hedging against the same book or the same team
+                                    if h['team'] != s['team'] and h['key'] != s['key']:
                                         if not best_h or h['price'] > best_h['price']: best_h = h
                                 
                                 if best_h:
                                     s_dec = convert_american_to_decimal(s['price'])
                                     h_dec = convert_american_to_decimal(best_h['price'])
                                     
-                                    # Strategy Math
                                     if promo_type == "Profit Boost (%)":
                                         boost_mult = 1 + (boost_val / 100)
                                         s_dec_boosted = 1 + ((s_dec - 1) * boost_mult)
@@ -168,4 +184,4 @@ if run_scan:
                             c1.metric(f"Source: {op['s_book']}", f"{op['s_price']:+}", f"Bet ${max_wager:.0f}")
                             c2.metric(f"Hedge: {op['h_book']}", f"{op['h_price']:+}", f"Bet ${op['h_wager']:.2f}")
                             c3.metric("Profit", f"${op['profit']:.2f}", f"{op['roi']:.1f}% ROI")
-                            st.caption(f"Starts: {op['time']}")
+                            st.caption(f"Starts: {op['time']} | Market: Moneyline")
