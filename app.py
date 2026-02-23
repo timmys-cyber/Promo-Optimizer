@@ -10,20 +10,16 @@ st.markdown("""
     <style>
     [data-testid="stSidebar"] { display: none; }
     [data-testid="collapsedControl"] { display: none; }
-    
     .stApp { background-color: #f8f9fb; }
     div[data-testid="stExpander"] { background-color: white; border-radius: 10px; border: 1px solid #eee; margin-bottom: 15px; }
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #eee; }
-    
     input[type=number]::-webkit-inner-spin-button, 
     input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     input[type=number] { -moz-appearance: textfield; }
-
     .hedge-header { padding: 10px; border-radius: 5px; margin-top: 20px; margin-bottom: 10px; font-weight: bold; font-size: 1.1rem; }
     .low-hedge { background-color: #e8f5e9; color: #2e7d32; border-left: 5px solid #2e7d32; }
     .med-hedge { background-color: #fff3e0; color: #ef6c00; border-left: 5px solid #ef6c00; }
     .high-hedge { background-color: #efebe9; color: #4e342e; border-left: 5px solid #4e342e; }
-    
     .manual-calc { background-color: #ffffff; padding: 25px; border-radius: 15px; border: 2px solid #31333f; margin-top: 50px; }
     </style>
     """, unsafe_allow_html=True)
@@ -32,9 +28,16 @@ st.markdown("""
 def convert_american_to_decimal(american_odds):
     return (american_odds / 100) + 1 if american_odds > 0 else (100 / abs(american_odds)) + 1
 
+# THE SCORE BET -> mapped to 'espnbet' for API compliance
 BOOK_MAP = {
-    "All": "all", "FanDuel": "fanduel", "DraftKings": "draftkings", "theScore Bet": "espnbet",
-    "Bet365": "bet365", "BetMGM": "betmgm", "Caesars": "williamhill_us", "Fanatics": "fanatics"
+    "All": "all", 
+    "theScore Bet": "espnbet", 
+    "FanDuel": "fanduel", 
+    "DraftKings": "draftkings",
+    "Bet365": "bet365", 
+    "BetMGM": "betmgm", 
+    "Caesars": "williamhill_us", 
+    "Fanatics": "fanatics"
 }
 
 # --- TITLE ---
@@ -48,10 +51,11 @@ with st.container():
     with r1c3: source_book_name = st.selectbox("Source Book", list(BOOK_MAP.keys()), index=0)
     with r1c4: hedge_book_name = st.selectbox("Hedge Book", list(BOOK_MAP.keys()), index=0)
 
-    r2c1, r2c2, r2c3 = st.columns([1, 1, 2])
+    r2c1, r2c2, r2c3, r2c4 = st.columns([1, 1, 1, 1])
     with r2c1: boost_val = st.number_input("Boost %", value=50, step=None) if promo_type == "Profit Boost (%)" else 0
     with r2c2: sport_cat = st.selectbox("Sport Category", ["All H2H Sports", "NBA", "NHL", "MLB", "UFC / MMA", "Tennis", "NCAAB"])
-    with r2c3: 
+    with r2c3: debug_mode = st.toggle("Debug Mode", value=False)
+    with r2c4: 
         st.write("")
         run_scan = st.button("🚀 Run Live Scan", use_container_width=True)
 
@@ -76,6 +80,7 @@ if run_scan:
         with st.spinner("Finding highest ROI plays..."):
             for sport in target_sports:
                 url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
+                # Using 'us' region to catch ESPN Bet (theScore)
                 params = {'apiKey': api_key, 'regions': 'us', 'markets': 'h2h', 'oddsFormat': 'american'}
                 try:
                     res = requests.get(url, params=params)
@@ -85,10 +90,16 @@ if run_scan:
                             g_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
                             if g_time < now + timedelta(minutes=2): continue 
                             
+                            # Debug Mode: List all books found for this specific game
+                            if debug_mode:
+                                available = [bm['key'] for bm in game['bookmakers']]
+                                st.write(f"Game: {game['away_team']}@{game['home_team']} | Books: {available}")
+
                             source_prices, hedge_prices = [], []
                             for bm in game['bookmakers']:
                                 is_source = (source_book_name == "All" and bm['key'] in BOOK_MAP.values()) or (bm['key'] == BOOK_MAP[source_book_name])
                                 is_hedge = (hedge_book_name == "All" and bm['key'] in BOOK_MAP.values()) or (bm['key'] == BOOK_MAP[hedge_book_name])
+                                
                                 if is_source:
                                     for out in bm['markets'][0]['outcomes']:
                                         source_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
@@ -136,7 +147,7 @@ if run_scan:
                 except: continue
 
         if not all_opps:
-            st.warning("No opportunities found.")
+            st.warning("No opportunities found. Try selecting 'All' for books or a different sport.")
         else:
             low_hedge = sorted([o for o in all_opps if o['h_wager'] < 50], key=lambda x: x['roi'], reverse=True)[:3]
             med_hedge = sorted([o for o in all_opps if 50 <= o['h_wager'] < 150], key=lambda x: x['roi'], reverse=True)[:3]
@@ -156,29 +167,23 @@ if run_scan:
 # --- MANUAL CALCULATOR SECTION ---
 st.markdown('<div class="manual-calc">', unsafe_allow_html=True)
 st.subheader("🖋️ Manual Adjustment Calculator")
-st.write("Tweak the numbers below for custom scenarios or if lines move.")
-
-# Default values from best match if available, otherwise blank
 d_s_team = best_match_for_calc['s_team'] if best_match_for_calc else "Team A"
 d_s_price = best_match_for_calc['s_price'] if best_match_for_calc else 100
 d_h_price = best_match_for_calc['h_price'] if best_match_for_calc else -110
 
 mc1, mc2, mc3 = st.columns(3)
 with mc1:
-    m_wager = st.number_input("Manual Wager ($)", value=max_wager, step=None)
-    m_boost = st.number_input("Manual Boost %", value=boost_val, step=None)
+    m_wager = st.number_input("Manual Wager ($)", value=max_wager, key="mw", step=None)
+    m_boost = st.number_input("Manual Boost %", value=float(boost_val), key="mb", step=None)
 with mc2:
-    m_s_price = st.number_input(f"Source Odds ({d_s_team})", value=float(d_s_price), step=None)
+    m_s_price = st.number_input(f"Source Odds ({d_s_team})", value=float(d_s_price), key="msp", step=None)
 with mc3:
-    m_h_price = st.number_input("Hedge Odds (Opponent)", value=float(d_h_price), step=None)
+    m_h_price = st.number_input("Hedge Odds (Opponent)", value=float(d_h_price), key="mhp", step=None)
 
-# Live Math for Manual Calc
 ms_dec = convert_american_to_decimal(m_s_price)
 mh_dec = convert_american_to_decimal(m_h_price)
-
 if promo_type == "Profit Boost (%)":
-    mb_mult = 1 + (m_boost / 100)
-    ms_dec_b = 1 + ((ms_dec - 1) * mb_mult)
+    ms_dec_b = 1 + ((ms_dec - 1) * (1 + (m_boost / 100)))
     mh_wager = (m_wager * ms_dec_b) / mh_dec
     m_profit = (m_wager * ms_dec_b) - (m_wager + mh_wager)
 elif promo_type == "Bonus Bet":
@@ -191,11 +196,9 @@ else:
     mh_wager = (m_wager * ms_dec) / mh_dec
     m_profit = (m_wager * ms_dec) - (m_wager + mh_wager)
 
-m_roi = (m_profit / m_wager) * 100
-
 st.markdown("---")
 res1, res2, res3 = st.columns(3)
 res1.metric("Required Hedge", f"${mh_wager:.2f}")
 res2.metric("Manual Profit", f"${m_profit:.2f}")
-res3.metric("Manual ROI", f"{m_roi:.1f}%")
+res3.metric("Manual ROI", f"{(m_profit/m_wager)*100:.1f}%")
 st.markdown('</div>', unsafe_allow_html=True)
