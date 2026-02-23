@@ -28,17 +28,11 @@ st.markdown("""
 def convert_american_to_decimal(american_odds):
     return (american_odds / 100) + 1 if american_odds > 0 else (100 / abs(american_odds)) + 1
 
-# THE SCORE BET -> mapped to 'espnbet' for API compliance
 BOOK_MAP = {
-    "All": "all", 
-    "theScore Bet": "espnbet", 
-    "FanDuel": "fanduel", 
-    "DraftKings": "draftkings",
-    "Bet365": "bet365", 
-    "BetMGM": "betmgm", 
-    "Caesars": "williamhill_us", 
-    "Fanatics": "fanatics"
+    "All": "all", "theScore Bet": "espnbet", "FanDuel": "fanduel", "DraftKings": "draftkings",
+    "Bet365": "bet365", "BetMGM": "betmgm", "Caesars": "williamhill_us", "Fanatics": "fanatics"
 }
+VALID_BOOKS = [v for k, v in BOOK_MAP.items() if v != "all"]
 
 # --- TITLE ---
 st.title("💰 Sportsbook Moneymaker")
@@ -68,6 +62,17 @@ if run_scan:
         st.error("Please add your API Key to Streamlit Secrets.")
     else:
         now = datetime.now(timezone.utc)
+        
+        # Determine exactly which bookmakers to request to save API bandwidth
+        request_books = set()
+        if source_book_name == "All": request_books.update(VALID_BOOKS)
+        else: request_books.add(BOOK_MAP[source_book_name])
+        
+        if hedge_book_name == "All": request_books.update(VALID_BOOKS)
+        else: request_books.add(BOOK_MAP[hedge_book_name])
+        
+        bookmaker_query = ",".join(request_books)
+
         sport_map = {
             "NBA": ["basketball_nba"], "NHL": ["icehockey_nhl"], "MLB": ["baseball_mlb"], "UFC / MMA": ["mma_mixed_martial_arts"],
             "Tennis": ["tennis_atp_aus_open", "tennis_atp_french_open", "tennis_atp_wimbledon", "tennis_atp_us_open"],
@@ -77,11 +82,17 @@ if run_scan:
         target_sports = sport_map.get(sport_cat, [])
         all_opps = []
 
-        with st.spinner("Finding highest ROI plays..."):
+        with st.spinner(f"Scanning {len(request_books)} specific books..."):
             for sport in target_sports:
                 url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
-                # Using 'us' region to catch ESPN Bet (theScore)
-                params = {'apiKey': api_key, 'regions': 'us', 'markets': 'h2h', 'oddsFormat': 'american'}
+                # FILTERED API CALL: Passing bookmakers parameter
+                params = {
+                    'apiKey': api_key, 
+                    'regions': 'us', 
+                    'markets': 'h2h', 
+                    'oddsFormat': 'american',
+                    'bookmakers': bookmaker_query
+                }
                 try:
                     res = requests.get(url, params=params)
                     if res.status_code == 200:
@@ -90,20 +101,19 @@ if run_scan:
                             g_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
                             if g_time < now + timedelta(minutes=2): continue 
                             
-                            # Debug Mode: List all books found for this specific game
                             if debug_mode:
                                 available = [bm['key'] for bm in game['bookmakers']]
-                                st.write(f"Game: {game['away_team']}@{game['home_team']} | Books: {available}")
+                                st.write(f"Game: {game['away_team']}@{game['home_team']} | API Returned: {available}")
 
                             source_prices, hedge_prices = [], []
                             for bm in game['bookmakers']:
-                                is_source = (source_book_name == "All" and bm['key'] in BOOK_MAP.values()) or (bm['key'] == BOOK_MAP[source_book_name])
-                                is_hedge = (hedge_book_name == "All" and bm['key'] in BOOK_MAP.values()) or (bm['key'] == BOOK_MAP[hedge_book_name])
+                                s_key = BOOK_MAP[source_book_name]
+                                h_key = BOOK_MAP[hedge_book_name]
                                 
-                                if is_source:
+                                if s_key == "all" or bm['key'] == s_key:
                                     for out in bm['markets'][0]['outcomes']:
                                         source_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
-                                if is_hedge:
+                                if h_key == "all" or bm['key'] == h_key:
                                     for out in bm['markets'][0]['outcomes']:
                                         hedge_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
 
@@ -114,14 +124,11 @@ if run_scan:
                                         if not best_h or h['price'] > best_h['price']: best_h = h
                                 
                                 if best_h:
-                                    s_dec = convert_american_to_decimal(s['price'])
-                                    h_dec = convert_american_to_decimal(best_h['price'])
-                                    
+                                    s_dec, h_dec = convert_american_to_decimal(s['price']), convert_american_to_decimal(best_h['price'])
                                     if promo_type == "Profit Boost (%)":
-                                        boost_mult = 1 + (boost_val / 100)
-                                        s_dec_boosted = 1 + ((s_dec - 1) * boost_mult)
-                                        h_wager = (max_wager * s_dec_boosted) / h_dec
-                                        profit = (max_wager * s_dec_boosted) - (max_wager + h_wager)
+                                        ms_dec_b = 1 + ((s_dec - 1) * (1 + (boost_val / 100)))
+                                        h_wager = (max_wager * ms_dec_b) / h_dec
+                                        profit = (max_wager * ms_dec_b) - (max_wager + h_wager)
                                     elif promo_type == "Bonus Bet":
                                         h_wager = (max_wager * (s_dec - 1)) / h_dec
                                         profit = (max_wager * (s_dec - 1)) - h_wager
@@ -146,59 +153,50 @@ if run_scan:
                                             best_match_for_calc = opp
                 except: continue
 
-        if not all_opps:
-            st.warning("No opportunities found. Try selecting 'All' for books or a different sport.")
+        if not all_opps: st.warning("No opportunities found.")
         else:
-            low_hedge = sorted([o for o in all_opps if o['h_wager'] < 50], key=lambda x: x['roi'], reverse=True)[:3]
-            med_hedge = sorted([o for o in all_opps if 50 <= o['h_wager'] < 150], key=lambda x: x['roi'], reverse=True)[:3]
-            high_hedge = sorted([o for o in all_opps if o['h_wager'] >= 150], key=lambda x: x['roi'], reverse=True)[:3]
-
-            groups = [("🟢 Top 3: Low Hedge", low_hedge, "low-hedge"), ("🟠 Top 3: Medium Hedge", med_hedge, "med-hedge"), ("🔴 Top 3: High Hedge", high_hedge, "high-hedge")]
-            for title, data, css_class in groups:
+            low = sorted([o for o in all_opps if o['h_wager'] < 50], key=lambda x: x['roi'], reverse=True)[:3]
+            med = sorted([o for o in all_opps if 50 <= o['h_wager'] < 150], key=lambda x: x['roi'], reverse=True)[:3]
+            hi = sorted([o for o in all_opps if o['h_wager'] >= 150], key=lambda x: x['roi'], reverse=True)[:3]
+            for title, data, css in [("🟢 Low Hedge", low, "low-hedge"), ("🟠 Medium Hedge", med, "med-hedge"), ("🔴 High Hedge", hi, "high-hedge")]:
                 if data:
-                    st.markdown(f'<div class="hedge-header {css_class}">{title}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="hedge-header {css}">{title}</div>', unsafe_allow_html=True)
                     for op in data:
                         with st.expander(f"{op['sport']} | {op['game']} | ROI: {op['roi']:.1f}%"):
                             c1, c2, c3 = st.columns(3)
-                            c1.metric(f"Source: {op['s_book']}", f"{op['s_price']:+}", f"Bet ${max_wager:.0f}")
-                            c2.metric(f"Hedge: {op['h_book']}", f"{op['h_price']:+}", f"Bet ${op['h_wager']:.2f}")
+                            c1.metric(f"Source: {op['s_book']}", f"{op['s_price']}", f"Bet ${max_wager:.0f}")
+                            c2.metric(f"Hedge: {op['h_book']}", f"{op['h_price']}", f"Bet ${op['h_wager']:.2f}")
                             c3.metric("Profit", f"${op['profit']:.2f}", f"{op['roi']:.1f}% ROI")
 
-# --- MANUAL CALCULATOR SECTION ---
+# --- MANUAL CALCULATOR ---
 st.markdown('<div class="manual-calc">', unsafe_allow_html=True)
 st.subheader("🖋️ Manual Adjustment Calculator")
-d_s_team = best_match_for_calc['s_team'] if best_match_for_calc else "Team A"
-d_s_price = best_match_for_calc['s_price'] if best_match_for_calc else 100
-d_h_price = best_match_for_calc['h_price'] if best_match_for_calc else -110
-
+d_st, d_sp, d_hp = (best_match_for_calc['s_team'], best_match_for_calc['s_price'], best_match_for_calc['h_price']) if best_match_for_calc else ("Team A", 100, -110)
 mc1, mc2, mc3 = st.columns(3)
-with mc1:
-    m_wager = st.number_input("Manual Wager ($)", value=max_wager, key="mw", step=None)
-    m_boost = st.number_input("Manual Boost %", value=float(boost_val), key="mb", step=None)
-with mc2:
-    m_s_price = st.number_input(f"Source Odds ({d_s_team})", value=float(d_s_price), key="msp", step=None)
-with mc3:
-    m_h_price = st.number_input("Hedge Odds (Opponent)", value=float(d_h_price), key="mhp", step=None)
+with mc1: 
+    m_wag = st.number_input("Manual Wager ($)", value=max_wager, key="mw", step=None)
+    m_bst = st.number_input("Manual Boost %", value=float(boost_val), key="mb", step=None)
+with mc2: m_sp = st.number_input(f"Source Odds ({d_st})", value=float(d_sp), key="msp", step=None)
+with mc3: m_hp = st.number_input("Hedge Odds (Opponent)", value=float(d_hp), key="mhp", step=None)
 
-ms_dec = convert_american_to_decimal(m_s_price)
-mh_dec = convert_american_to_decimal(m_h_price)
+ms_d, mh_d = convert_american_to_decimal(m_sp), convert_american_to_decimal(m_hp)
 if promo_type == "Profit Boost (%)":
-    ms_dec_b = 1 + ((ms_dec - 1) * (1 + (m_boost / 100)))
-    mh_wager = (m_wager * ms_dec_b) / mh_dec
-    m_profit = (m_wager * ms_dec_b) - (m_wager + mh_wager)
+    ms_db = 1 + ((ms_d - 1) * (1 + (m_bst / 100)))
+    mh_wag = (m_wag * ms_db) / mh_d
+    m_prof = (m_wag * ms_db) - (m_wag + mh_wag)
 elif promo_type == "Bonus Bet":
-    mh_wager = (m_wager * (ms_dec - 1)) / mh_dec
-    m_profit = (m_wager * (ms_dec - 1)) - mh_wager
+    mh_wag = (m_wag * (ms_d - 1)) / mh_d
+    m_prof = (m_wag * (ms_d - 1)) - mh_wag
 elif promo_type == "No-Sweat Bet":
-    mh_wager = (m_wager * (ms_dec - 0.3)) / mh_dec
-    m_profit = (m_wager * (ms_dec - 1)) - mh_wager
+    mh_wag = (m_wag * (ms_d - 0.3)) / mh_d
+    m_prof = (m_wag * (ms_d - 1)) - mh_wag
 else:
-    mh_wager = (m_wager * ms_dec) / mh_dec
-    m_profit = (m_wager * ms_dec) - (m_wager + mh_wager)
+    mh_wag = (m_wag * ms_d) / mh_d
+    m_prof = (m_wag * ms_d) - (m_wag + mh_wag)
 
 st.markdown("---")
-res1, res2, res3 = st.columns(3)
-res1.metric("Required Hedge", f"${mh_wager:.2f}")
-res2.metric("Manual Profit", f"${m_profit:.2f}")
-res3.metric("Manual ROI", f"{(m_profit/m_wager)*100:.1f}%")
+r1, r2, r3 = st.columns(3)
+r1.metric("Required Hedge", f"${mh_wag:.2f}")
+r2.metric("Manual Profit", f"${m_prof:.2f}")
+r3.metric("Manual ROI", f"{(m_prof/m_wag)*100:.1f}%")
 st.markdown('</div>', unsafe_allow_html=True)
