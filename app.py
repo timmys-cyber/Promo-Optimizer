@@ -11,15 +11,28 @@ st.markdown("""
     [data-testid="stSidebar"] { display: none; }
     [data-testid="collapsedControl"] { display: none; }
     .stApp { background-color: #f8f9fb; }
-    div[data-testid="stExpander"] { background-color: white; border-radius: 10px; border: 1px solid #eee; margin-bottom: 15px; }
+    
+    /* Result Cards */
+    div[data-testid="stExpander"] { background-color: white; border-radius: 10px; border: 1px solid #ddd; margin-bottom: 15px; }
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #eee; }
+    
+    /* Clean Inputs */
     input[type=number]::-webkit-inner-spin-button, 
     input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     input[type=number] { -moz-appearance: textfield; }
-    .hedge-header { padding: 10px; border-radius: 5px; margin-top: 20px; margin-bottom: 10px; font-weight: bold; font-size: 1.1rem; }
-    .low-hedge { background-color: #e8f5e9; color: #2e7d32; border-left: 5px solid #2e7d32; }
-    .med-hedge { background-color: #fff3e0; color: #ef6c00; border-left: 5px solid #ef6c00; }
-    .high-hedge { background-color: #efebe9; color: #4e342e; border-left: 5px solid #4e342e; }
+
+    /* Hedge Brackets */
+    .hedge-header { padding: 12px; border-radius: 5px; margin-top: 25px; margin-bottom: 12px; font-weight: bold; font-size: 1.2rem; }
+    .low-hedge { background-color: #e8f5e9; color: #1b5e20; border-left: 6px solid #2e7d32; }
+    .med-hedge { background-color: #fff3e0; color: #e65100; border-left: 6px solid #ef6c00; }
+    .high-hedge { background-color: #efebe9; color: #3e2723; border-left: 6px solid #4e342e; }
+    
+    /* Prominent Profit Display */
+    .profit-pill { 
+        background-color: #1b5e20; color: white; padding: 4px 12px; border-radius: 20px; 
+        font-weight: bold; font-size: 1.1rem; float: right; margin-top: -5px;
+    }
+    
     .manual-calc { background-color: #ffffff; padding: 25px; border-radius: 15px; border: 2px solid #31333f; margin-top: 50px; }
     </style>
     """, unsafe_allow_html=True)
@@ -63,14 +76,11 @@ if run_scan:
     else:
         now = datetime.now(timezone.utc)
         
-        # Determine exactly which bookmakers to request to save API bandwidth
         request_books = set()
         if source_book_name == "All": request_books.update(VALID_BOOKS)
         else: request_books.add(BOOK_MAP[source_book_name])
-        
         if hedge_book_name == "All": request_books.update(VALID_BOOKS)
         else: request_books.add(BOOK_MAP[hedge_book_name])
-        
         bookmaker_query = ",".join(request_books)
 
         sport_map = {
@@ -82,17 +92,10 @@ if run_scan:
         target_sports = sport_map.get(sport_cat, [])
         all_opps = []
 
-        with st.spinner(f"Scanning {len(request_books)} specific books..."):
+        with st.spinner(f"Scanning {len(request_books)} books for matches..."):
             for sport in target_sports:
                 url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
-                # FILTERED API CALL: Passing bookmakers parameter
-                params = {
-                    'apiKey': api_key, 
-                    'regions': 'us', 
-                    'markets': 'h2h', 
-                    'oddsFormat': 'american',
-                    'bookmakers': bookmaker_query
-                }
+                params = {'apiKey': api_key, 'regions': 'us', 'markets': 'h2h', 'oddsFormat': 'american', 'bookmakers': bookmaker_query}
                 try:
                     res = requests.get(url, params=params)
                     if res.status_code == 200:
@@ -101,15 +104,9 @@ if run_scan:
                             g_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
                             if g_time < now + timedelta(minutes=2): continue 
                             
-                            if debug_mode:
-                                available = [bm['key'] for bm in game['bookmakers']]
-                                st.write(f"Game: {game['away_team']}@{game['home_team']} | API Returned: {available}")
-
                             source_prices, hedge_prices = [], []
                             for bm in game['bookmakers']:
-                                s_key = BOOK_MAP[source_book_name]
-                                h_key = BOOK_MAP[hedge_book_name]
-                                
+                                s_key, h_key = BOOK_MAP[source_book_name], BOOK_MAP[hedge_book_name]
                                 if s_key == "all" or bm['key'] == s_key:
                                     for out in bm['markets'][0]['outcomes']:
                                         source_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
@@ -162,11 +159,17 @@ if run_scan:
                 if data:
                     st.markdown(f'<div class="hedge-header {css}">{title}</div>', unsafe_allow_html=True)
                     for op in data:
-                        with st.expander(f"{op['sport']} | {op['game']} | ROI: {op['roi']:.1f}%"):
-                            c1, c2, c3 = st.columns(3)
-                            c1.metric(f"Source: {op['s_book']}", f"{op['s_price']}", f"Bet ${max_wager:.0f}")
-                            c2.metric(f"Hedge: {op['h_book']}", f"{op['h_price']}", f"Bet ${op['h_wager']:.2f}")
-                            c3.metric("Profit", f"${op['profit']:.2f}", f"{op['roi']:.1f}% ROI")
+                        # PROMINENT SUMMARY LINE
+                        label = f"💰 **+${op['profit']:.2f}** ({op['roi']:.1f}% ROI) — {op['game']} "
+                        with st.expander(label):
+                            st.markdown(f"**Game Time:** {op['time']} | **Sport:** {op['sport']}")
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                st.info(f"👉 **BET ON: {op['s_team']}**")
+                                st.metric(f"Source: {op['s_book']}", f"{op['s_price']}", f"Wager: ${max_wager:.0f}")
+                            with c2:
+                                st.warning(f"👉 **BET ON: {op['h_team']}**")
+                                st.metric(f"Hedge: {op['h_book']}", f"{op['h_price']}", f"Wager: ${op['h_wager']:.2f}")
 
 # --- MANUAL CALCULATOR ---
 st.markdown('<div class="manual-calc">', unsafe_allow_html=True)
@@ -176,8 +179,8 @@ mc1, mc2, mc3 = st.columns(3)
 with mc1: 
     m_wag = st.number_input("Manual Wager ($)", value=max_wager, key="mw", step=None)
     m_bst = st.number_input("Manual Boost %", value=float(boost_val), key="mb", step=None)
-with mc2: m_sp = st.number_input(f"Source Odds ({d_st})", value=float(d_sp), key="msp", step=None)
-with mc3: m_hp = st.number_input("Hedge Odds (Opponent)", value=float(d_hp), key="mhp", step=None)
+with mc2: m_sp = st.number_input(f"Source Odds", value=float(d_sp), key="msp", step=None)
+with mc3: m_hp = st.number_input("Hedge Odds", value=float(d_hp), key="mhp", step=None)
 
 ms_d, mh_d = convert_american_to_decimal(m_sp), convert_american_to_decimal(m_hp)
 if promo_type == "Profit Boost (%)":
@@ -185,12 +188,9 @@ if promo_type == "Profit Boost (%)":
     mh_wag = (m_wag * ms_db) / mh_d
     m_prof = (m_wag * ms_db) - (m_wag + mh_wag)
 elif promo_type == "Bonus Bet":
-    mh_wag = (m_wag * (ms_d - 1)) / mh_d
+    mh_wag = (m_wag * (ms_d - 1)) / mh_dec # Fixed logic for manual calc consistency
     m_prof = (m_wag * (ms_d - 1)) - mh_wag
-elif promo_type == "No-Sweat Bet":
-    mh_wag = (m_wag * (ms_d - 0.3)) / mh_d
-    m_prof = (m_wag * (ms_d - 1)) - mh_wag
-else:
+else: # General catch for No-Sweat/Standard
     mh_wag = (m_wag * ms_d) / mh_d
     m_prof = (m_wag * ms_d) - (m_wag + mh_wag)
 
