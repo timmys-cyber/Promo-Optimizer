@@ -3,7 +3,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Arb Terminal | H2H Pro", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Sportsbook Moneymaker", layout="wide", initial_sidebar_state="collapsed")
 
 # --- CUSTOM CSS ---
 st.markdown("""
@@ -16,11 +16,16 @@ st.markdown("""
     div[data-testid="stExpander"] { background-color: white; border-radius: 10px; border: 1px solid #eee; margin-bottom: 15px; }
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #eee; }
     
-    /* Remove number input +/- buttons */
+    /* REMOVE ALL NUMBER INPUT CONTROLS (Plus/Minus/Spinners) */
     input[type=number]::-webkit-inner-spin-button, 
-    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-    input[type=number] { -moz-appearance: textfield; }
-    
+    input[type=number]::-webkit-outer-spin-button { 
+        -webkit-appearance: none; 
+        margin: 0; 
+    }
+    input[type=number] { 
+        -moz-appearance: textfield; 
+    }
+
     .hedge-header { padding: 10px; border-radius: 5px; margin-top: 20px; margin-bottom: 10px; font-weight: bold; font-size: 1.1rem; }
     .low-hedge { background-color: #e8f5e9; color: #2e7d32; border-left: 5px solid #2e7d32; }
     .med-hedge { background-color: #fff3e0; color: #ef6c00; border-left: 5px solid #ef6c00; }
@@ -33,7 +38,7 @@ def convert_american_to_decimal(american_odds):
     return (american_odds / 100) + 1 if american_odds > 0 else (100 / abs(american_odds)) + 1
 
 # --- TITLE ---
-st.title("📈 Top-3 Two-Way Optimizer")
+st.title("💰 Sportsbook Moneymaker")
 
 # --- MAIN INPUT PANEL ---
 with st.container():
@@ -42,19 +47,19 @@ with st.container():
     with row1_c1:
         promo_type = st.selectbox("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet", "Standard Arb"])
     with row1_c2:
+        # step=None and CSS above ensure this is a clean free-text box
         max_wager = st.number_input("Source Wager ($)", value=50.0, step=None)
     with row1_c3:
         source_book_name = st.selectbox("Source Book", ["FanDuel", "DraftKings", "theScore Bet", "Bet365", "BetMGM", "Caesars", "Fanatics"])
     with row1_c4:
         sport_cat = st.selectbox("Sport Category", ["All H2H Sports", "NBA", "NHL", "MLB", "UFC / MMA", "Tennis", "NCAAB"])
 
-    # Bottom Row for Filters & Execution
-    row2_c1, row2_c2, row2_c3 = st.columns([1, 1, 2])
+    # Bottom Row for Boost & Execution
+    row2_c1, row2_c2 = st.columns([1, 3])
     with row2_c1:
+        # step=None ensures no plus/minus controls on the boost input
         boost_val = st.number_input("Boost %", value=50, step=None) if promo_type == "Profit Boost (%)" else 0
     with row2_c2:
-        min_roi = st.slider("Min ROI %", -2.0, 20.0, 0.0)
-    with row2_c3:
         st.write("") # Spacer
         run_scan = st.button("🚀 Run Live Scan", use_container_width=True)
 
@@ -113,6 +118,7 @@ if run_scan:
                                     s_dec = convert_american_to_decimal(s['price'])
                                     h_dec = convert_american_to_decimal(best_h['price'])
                                     
+                                    # Strategy Math
                                     if promo_type == "Profit Boost (%)":
                                         boost_mult = 1 + (boost_val / 100)
                                         s_dec_boosted = 1 + ((s_dec - 1) * boost_mult)
@@ -129,7 +135,7 @@ if run_scan:
                                         profit = (max_wager * s_dec) - (max_wager + h_wager)
 
                                     roi = (profit / max_wager) * 100
-                                    if roi >= min_roi:
+                                    if roi >= -10:
                                         all_opps.append({
                                             "sport": sport.upper().replace('_', ' '), "game": f"{game['away_team']} vs {game['home_team']}",
                                             "time": g_time.strftime("%m/%d %I:%M %p"), "profit": profit, "roi": roi,
@@ -141,9 +147,8 @@ if run_scan:
 
         # --- DISPLAY TOP 3 PER GROUP ---
         if not all_opps:
-            st.warning("No opportunities found matching these criteria.")
+            st.warning("No opportunities found.")
         else:
-            # Grouping Logic
             low_hedge = sorted([o for o in all_opps if o['h_wager'] < 50], key=lambda x: x['roi'], reverse=True)[:3]
             med_hedge = sorted([o for o in all_opps if 50 <= o['h_wager'] < 150], key=lambda x: x['roi'], reverse=True)[:3]
             high_hedge = sorted([o for o in all_opps if o['h_wager'] >= 150], key=lambda x: x['roi'], reverse=True)[:3]
