@@ -35,6 +35,12 @@ st.markdown("""
 def convert_american_to_decimal(american_odds):
     return (american_odds / 100) + 1 if american_odds > 0 else (100 / abs(american_odds)) + 1
 
+def convert_decimal_to_american(decimal_odds):
+    if decimal_odds >= 2.0:
+        return int((decimal_odds - 1) * 100)
+    else:
+        return int(-100 / (decimal_odds - 1))
+
 BOOK_MAP = {
     "All": "all", "theScore Bet": "espnbet", "FanDuel": "fanduel", "DraftKings": "draftkings",
     "Bet365": "bet365", "BetMGM": "betmgm", "Caesars": "williamhill_us", "Fanatics": "fanatics"
@@ -51,8 +57,8 @@ with st.container():
     with r1c2: max_wager = st.number_input("Source Wager ($)", value=50.0)
     with r1c3: source_book_name = st.selectbox("Source Book", list(BOOK_MAP.keys()), index=0)
     with r1c4: hedge_book_name = st.selectbox("Hedge Book", list(BOOK_MAP.keys()), index=0)
-    # NEW: Minimum Odds Input (Default to -9999 to act as null/no limit)
-    with r1c5: min_odds = st.number_input("Min Source Odds", value=-9999, help="Example: Enter 200 for +200. Leave as -9999 for no limit.")
+    # UPDATED: Min Total Odds (Checks against the FINAL price after boost)
+    with r1c5: min_total_odds = st.number_input("Min Total Odds", value=-9999, help="Checks the FINAL price (after boost). Enter 200 for +200.")
 
     r2c1, r2c2, r2c3, r2c4 = st.columns([1, 1, 1, 1])
     with r2c1: boost_val = st.number_input("Boost %", value=50) if promo_type == "Profit Boost (%)" else 0
@@ -71,7 +77,6 @@ if run_scan:
         st.error("Please add your API Key to Streamlit Secrets.")
     else:
         now = datetime.now(timezone.utc)
-        
         request_books = set()
         if source_book_name == "All": request_books.update(VALID_BOOKS)
         else: request_books.add(BOOK_MAP[source_book_name])
@@ -119,9 +124,7 @@ if run_scan:
                                 s_key, h_key = BOOK_MAP[source_book_name], BOOK_MAP[hedge_book_name]
                                 if s_key == "all" or bm['key'] == s_key:
                                     for out in bm['markets'][0]['outcomes']:
-                                        # APPLY MIN ODDS FILTER HERE
-                                        if out['price'] >= min_odds:
-                                            source_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
+                                        source_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
                                 if h_key == "all" or bm['key'] == h_key:
                                     for out in bm['markets'][0]['outcomes']:
                                         hedge_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
@@ -134,10 +137,24 @@ if run_scan:
                                 
                                 if best_h:
                                     s_dec, h_dec = convert_american_to_decimal(s['price']), convert_american_to_decimal(best_h['price'])
+                                    
+                                    # LOGIC: Calculate Boosted Payout for the Odds Check
                                     if promo_type == "Profit Boost (%)":
-                                        ms_dec_b = 1 + ((s_dec - 1) * (1 + (boost_val / 100)))
-                                        h_wager = (max_wager * ms_dec_b) / h_dec
-                                        profit = (max_wager * ms_dec_b) - (max_wager + h_wager)
+                                        total_s_dec = 1 + ((s_dec - 1) * (1 + (boost_val / 100)))
+                                    else:
+                                        total_s_dec = s_dec
+                                    
+                                    # CONVERT BOOSTED PRICE BACK TO AMERICAN TO COMPARE WITH INPUT
+                                    current_total_american = convert_decimal_to_american(total_s_dec)
+                                    
+                                    # FILTER CHECK
+                                    if current_total_american < min_total_odds:
+                                        continue
+
+                                    # CALC HEDGE & PROFIT
+                                    if promo_type == "Profit Boost (%)":
+                                        h_wager = (max_wager * total_s_dec) / h_dec
+                                        profit = (max_wager * total_s_dec) - (max_wager + h_wager)
                                     elif promo_type == "Bonus Bet":
                                         h_wager = (max_wager * (s_dec - 1)) / h_dec
                                         profit = (max_wager * (s_dec - 1)) - h_wager
@@ -149,13 +166,13 @@ if run_scan:
                                         profit = (max_wager * s_dec) - (max_wager + h_wager)
 
                                     roi = (profit / max_wager) * 100
-                                    if roi >= -10:
+                                    if roi >= -15:
                                         opp = {
                                             "sport": sport.upper().replace('_', ' '), "game": f"{game['away_team']} vs {game['home_team']}",
                                             "time": g_time.strftime("%m/%d %I:%M %p"), "profit": profit, "roi": roi,
                                             "s_team": s['team'], "s_price": s['price'], "s_book": s['book'],
                                             "h_team": best_h['team'], "h_price": best_h['price'], "h_book": best_h['book'],
-                                            "h_wager": h_wager
+                                            "h_wager": h_wager, "total_odds": current_total_american
                                         }
                                         all_opps.append(opp)
                                         if best_match_for_calc is None or roi > best_match_for_calc['roi']:
@@ -171,7 +188,7 @@ if run_scan:
                 if data:
                     st.markdown(f'<div class="hedge-header {css}">{title}</div>', unsafe_allow_html=True)
                     for op in data:
-                        label = f"💰 **+${op['profit']:.2f}** ({op['roi']:.1f}% ROI) — {op['game']} "
+                        label = f"💰 **+${op['profit']:.2f}** ({op['roi']:.1f}% ROI) — {op['game']} (Total: {op['total_odds']:+})"
                         with st.expander(label):
                             st.markdown(f"**Game Time:** {op['time']} | **Sport:** {op['sport']}")
                             c1, c2 = st.columns(2)
