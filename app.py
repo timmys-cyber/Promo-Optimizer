@@ -46,14 +46,16 @@ st.title("💰 Sportsbook Moneymaker")
 
 # --- MAIN INPUT PANEL ---
 with st.container():
-    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+    r1c1, r1c2, r1c3, r1c4, r1c5 = st.columns(5)
     with r1c1: promo_type = st.selectbox("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet", "Standard Arb"])
-    with r1c2: max_wager = st.number_input("Source Wager ($)", value=50.0, step=None)
+    with r1c2: max_wager = st.number_input("Source Wager ($)", value=50.0)
     with r1c3: source_book_name = st.selectbox("Source Book", list(BOOK_MAP.keys()), index=0)
     with r1c4: hedge_book_name = st.selectbox("Hedge Book", list(BOOK_MAP.keys()), index=0)
+    # NEW: Minimum Odds Input (Default to -9999 to act as null/no limit)
+    with r1c5: min_odds = st.number_input("Min Source Odds", value=-9999, help="Example: Enter 200 for +200. Leave as -9999 for no limit.")
 
     r2c1, r2c2, r2c3, r2c4 = st.columns([1, 1, 1, 1])
-    with r2c1: boost_val = st.number_input("Boost %", value=50, step=None) if promo_type == "Profit Boost (%)" else 0
+    with r2c1: boost_val = st.number_input("Boost %", value=50) if promo_type == "Profit Boost (%)" else 0
     with r2c2: sport_cat = st.selectbox("Sport Category", ["All H2H Sports", "NBA", "NHL", "MLB", "UFC / MMA", "Tennis", "NCAAB"])
     with r2c3: debug_mode = st.toggle("Debug Mode", value=False)
     with r2c4: 
@@ -77,33 +79,19 @@ if run_scan:
         else: request_books.add(BOOK_MAP[hedge_book_name])
         bookmaker_query = ",".join(request_books)
 
-        # --- UPDATED SPORT MAP: FULL 2026 ATP/WTA CALENDAR ---
         sport_map = {
             "NBA": ["basketball_nba"], 
             "NHL": ["icehockey_nhl"], 
             "MLB": ["baseball_mlb"], 
             "UFC / MMA": ["mma_mixed_martial_arts"],
             "Tennis": [
-                # Current & Upcoming Masters 1000s
-                "tennis_atp_indian_wells", "tennis_wta_indian_wells",
-                "tennis_atp_miami_open", "tennis_wta_miami_open",
-                "tennis_atp_monte_carlo_masters",
-                "tennis_atp_madrid_open", "tennis_wta_madrid_open",
-                "tennis_atp_italian_open", "tennis_wta_italian_open",
-                "tennis_atp_canadian_open", "tennis_wta_canadian_open",
-                "tennis_atp_cincinnati_open", "tennis_wta_cincinnati_open",
-                "tennis_atp_shanghai_masters",
-                "tennis_atp_paris_masters",
-                
-                # Grand Slams
-                "tennis_atp_aus_open", "tennis_wta_aus_open",
-                "tennis_atp_french_open", "tennis_wta_french_open",
-                "tennis_atp_wimbledon", "tennis_wta_wimbledon",
-                "tennis_atp_us_open", "tennis_wta_us_open",
-                
-                # Season Finals & Combined
-                "tennis_atp_finals",
-                "tennis_atp_combined", "tennis_wta_combined"
+                "tennis_atp_indian_wells", "tennis_wta_indian_wells", "tennis_atp_miami_open", "tennis_wta_miami_open",
+                "tennis_atp_monte_carlo_masters", "tennis_atp_madrid_open", "tennis_wta_madrid_open",
+                "tennis_atp_italian_open", "tennis_wta_italian_open", "tennis_atp_canadian_open", "tennis_wta_canadian_open",
+                "tennis_atp_cincinnati_open", "tennis_wta_cincinnati_open", "tennis_atp_shanghai_masters", "tennis_atp_paris_masters",
+                "tennis_atp_aus_open", "tennis_wta_aus_open", "tennis_atp_french_open", "tennis_wta_french_open",
+                "tennis_atp_wimbledon", "tennis_wta_wimbledon", "tennis_atp_us_open", "tennis_wta_us_open",
+                "tennis_atp_finals", "tennis_atp_combined", "tennis_wta_combined"
             ],
             "NCAAB": ["basketball_ncaab"],
             "All H2H Sports": [
@@ -131,7 +119,9 @@ if run_scan:
                                 s_key, h_key = BOOK_MAP[source_book_name], BOOK_MAP[hedge_book_name]
                                 if s_key == "all" or bm['key'] == s_key:
                                     for out in bm['markets'][0]['outcomes']:
-                                        source_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
+                                        # APPLY MIN ODDS FILTER HERE
+                                        if out['price'] >= min_odds:
+                                            source_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
                                 if h_key == "all" or bm['key'] == h_key:
                                     for out in bm['markets'][0]['outcomes']:
                                         hedge_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
@@ -172,9 +162,8 @@ if run_scan:
                                             best_match_for_calc = opp
                 except: continue
 
-        if not all_opps: st.warning("No live opportunities found for the selected sports.")
+        if not all_opps: st.warning("No live opportunities found meeting these criteria.")
         else:
-            # Display logic
             low = sorted([o for o in all_opps if o['h_wager'] < 50], key=lambda x: x['roi'], reverse=True)[:3]
             med = sorted([o for o in all_opps if 50 <= o['h_wager'] < 150], key=lambda x: x['roi'], reverse=True)[:3]
             hi = sorted([o for o in all_opps if o['h_wager'] >= 150], key=lambda x: x['roi'], reverse=True)[:3]
