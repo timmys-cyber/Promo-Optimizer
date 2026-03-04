@@ -27,12 +27,6 @@ st.markdown("""
     .med-hedge { background-color: #fff3e0; color: #e65100; border-left: 6px solid #ef6c00; }
     .high-hedge { background-color: #efebe9; color: #3e2723; border-left: 6px solid #4e342e; }
     
-    /* Prominent Profit Display */
-    .profit-pill { 
-        background-color: #1b5e20; color: white; padding: 4px 12px; border-radius: 20px; 
-        font-weight: bold; font-size: 1.1rem; float: right; margin-top: -5px;
-    }
-    
     .manual-calc { background-color: #ffffff; padding: 25px; border-radius: 15px; border: 2px solid #31333f; margin-top: 50px; }
     </style>
     """, unsafe_allow_html=True)
@@ -83,16 +77,44 @@ if run_scan:
         else: request_books.add(BOOK_MAP[hedge_book_name])
         bookmaker_query = ",".join(request_books)
 
+        # --- UPDATED SPORT MAP: FULL 2026 ATP/WTA CALENDAR ---
         sport_map = {
-            "NBA": ["basketball_nba"], "NHL": ["icehockey_nhl"], "MLB": ["baseball_mlb"], "UFC / MMA": ["mma_mixed_martial_arts"],
-            "Tennis": ["tennis_atp_aus_open", "tennis_atp_french_open", "tennis_atp_wimbledon", "tennis_atp_us_open"],
+            "NBA": ["basketball_nba"], 
+            "NHL": ["icehockey_nhl"], 
+            "MLB": ["baseball_mlb"], 
+            "UFC / MMA": ["mma_mixed_martial_arts"],
+            "Tennis": [
+                # Current & Upcoming Masters 1000s
+                "tennis_atp_indian_wells", "tennis_wta_indian_wells",
+                "tennis_atp_miami_open", "tennis_wta_miami_open",
+                "tennis_atp_monte_carlo_masters",
+                "tennis_atp_madrid_open", "tennis_wta_madrid_open",
+                "tennis_atp_italian_open", "tennis_wta_italian_open",
+                "tennis_atp_canadian_open", "tennis_wta_canadian_open",
+                "tennis_atp_cincinnati_open", "tennis_wta_cincinnati_open",
+                "tennis_atp_shanghai_masters",
+                "tennis_atp_paris_masters",
+                
+                # Grand Slams
+                "tennis_atp_aus_open", "tennis_wta_aus_open",
+                "tennis_atp_french_open", "tennis_wta_french_open",
+                "tennis_atp_wimbledon", "tennis_wta_wimbledon",
+                "tennis_atp_us_open", "tennis_wta_us_open",
+                
+                # Season Finals & Combined
+                "tennis_atp_finals",
+                "tennis_atp_combined", "tennis_wta_combined"
+            ],
             "NCAAB": ["basketball_ncaab"],
-            "All H2H Sports": ["basketball_nba", "icehockey_nhl", "baseball_mlb", "mma_mixed_martial_arts", "basketball_ncaab"]
+            "All H2H Sports": [
+                "basketball_nba", "icehockey_nhl", "baseball_mlb", 
+                "tennis_atp_indian_wells", "tennis_atp_miami_open", "basketball_ncaab"
+            ]
         }
         target_sports = sport_map.get(sport_cat, [])
         all_opps = []
 
-        with st.spinner(f"Scanning {len(request_books)} books for matches..."):
+        with st.spinner(f"Scanning {len(request_books)} books..."):
             for sport in target_sports:
                 url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
                 params = {'apiKey': api_key, 'regions': 'us', 'markets': 'h2h', 'oddsFormat': 'american', 'bookmakers': bookmaker_query}
@@ -150,8 +172,9 @@ if run_scan:
                                             best_match_for_calc = opp
                 except: continue
 
-        if not all_opps: st.warning("No opportunities found.")
+        if not all_opps: st.warning("No live opportunities found for the selected sports.")
         else:
+            # Display logic
             low = sorted([o for o in all_opps if o['h_wager'] < 50], key=lambda x: x['roi'], reverse=True)[:3]
             med = sorted([o for o in all_opps if 50 <= o['h_wager'] < 150], key=lambda x: x['roi'], reverse=True)[:3]
             hi = sorted([o for o in all_opps if o['h_wager'] >= 150], key=lambda x: x['roi'], reverse=True)[:3]
@@ -159,7 +182,6 @@ if run_scan:
                 if data:
                     st.markdown(f'<div class="hedge-header {css}">{title}</div>', unsafe_allow_html=True)
                     for op in data:
-                        # PROMINENT SUMMARY LINE
                         label = f"💰 **+${op['profit']:.2f}** ({op['roi']:.1f}% ROI) — {op['game']} "
                         with st.expander(label):
                             st.markdown(f"**Game Time:** {op['time']} | **Sport:** {op['sport']}")
@@ -177,10 +199,10 @@ st.subheader("🖋️ Manual Adjustment Calculator")
 d_st, d_sp, d_hp = (best_match_for_calc['s_team'], best_match_for_calc['s_price'], best_match_for_calc['h_price']) if best_match_for_calc else ("Team A", 100, -110)
 mc1, mc2, mc3 = st.columns(3)
 with mc1: 
-    m_wag = st.number_input("Manual Wager ($)", value=max_wager, key="mw", step=None)
-    m_bst = st.number_input("Manual Boost %", value=float(boost_val), key="mb", step=None)
-with mc2: m_sp = st.number_input(f"Source Odds", value=float(d_sp), key="msp", step=None)
-with mc3: m_hp = st.number_input("Hedge Odds", value=float(d_hp), key="mhp", step=None)
+    m_wag = st.number_input("Manual Wager ($)", value=max_wager, key="mw")
+    m_bst = st.number_input("Manual Boost %", value=float(boost_val), key="mb")
+with mc2: m_sp = st.number_input(f"Source Odds", value=float(d_sp), key="msp")
+with mc3: m_hp = st.number_input("Hedge Odds", value=float(d_hp), key="mhp")
 
 ms_d, mh_d = convert_american_to_decimal(m_sp), convert_american_to_decimal(m_hp)
 if promo_type == "Profit Boost (%)":
@@ -188,9 +210,9 @@ if promo_type == "Profit Boost (%)":
     mh_wag = (m_wag * ms_db) / mh_d
     m_prof = (m_wag * ms_db) - (m_wag + mh_wag)
 elif promo_type == "Bonus Bet":
-    mh_wag = (m_wag * (ms_d - 1)) / mh_dec # Fixed logic for manual calc consistency
+    mh_wag = (m_wag * (ms_d - 1)) / mh_d
     m_prof = (m_wag * (ms_d - 1)) - mh_wag
-else: # General catch for No-Sweat/Standard
+else: 
     mh_wag = (m_wag * ms_d) / mh_d
     m_prof = (m_wag * ms_d) - (m_wag + mh_wag)
 
