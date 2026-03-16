@@ -41,11 +41,14 @@ SPORT_MAP = {
 st.markdown("""
     <style>
     [data-testid="stSidebar"] { display: none; }
-    .stTable { font-size: 0.85rem; }
     .promo-header { 
         background-color: #1E1E1E; color: white; padding: 12px 18px; 
         border-radius: 8px; margin-top: 30px; margin-bottom: 15px; font-weight: bold;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .queue-row {
+        padding: 5px 10px;
+        border-bottom: 1px solid #eee;
+        font-size: 0.9rem;
     }
     .detail-label { color: #666; font-size: 0.75rem; text-transform: uppercase; font-weight: bold; }
     .detail-value { font-size: 0.9rem; font-weight: 500; margin-bottom: 8px; }
@@ -76,18 +79,35 @@ with st.container(border=True):
             })
             st.rerun()
 
-# --- 2. CONDENSED QUEUE VIEW ---
+# --- 2. INTERACTIVE QUEUE ---
 if st.session_state.promo_queue:
     st.subheader("📋 Pending Queue")
-    df_queue = pd.DataFrame(st.session_state.promo_queue).drop(columns=['raw_boost'])
-    st.table(df_queue) 
     
-    qc1, qc2 = st.columns([1, 4])
-    if qc1.button("🗑️ Clear Queue", use_container_width=True):
-        st.session_state.promo_queue = []
-        st.session_state.results = []
-        st.rerun()
+    # Header Row for Queue
+    h_col1, h_col2, h_col3, h_col4, h_col5, h_col6 = st.columns([2, 1, 1.5, 1.5, 1, 0.5])
+    h_col1.caption("STRATEGY")
+    h_col2.caption("WAGER")
+    h_col3.caption("SOURCE")
+    h_col4.caption("HEDGE")
+    h_col5.caption("SPORT")
+    h_col6.write("")
 
+    # Individual Rows with Trash Icons
+    for idx, promo in enumerate(st.session_state.promo_queue):
+        r_col1, r_col2, r_col3, r_col4, r_col5, r_col6 = st.columns([2, 1, 1.5, 1.5, 1, 0.5])
+        
+        r_col1.write(f"**{promo['Strategy']}** ({promo['Boost']})")
+        r_col2.write(f"${promo['Wager']:.0f}")
+        r_col3.write(promo['Source'])
+        r_col4.write(promo['Hedge'])
+        r_col5.write(promo['Sport'])
+        
+        if r_col6.button("🗑️", key=f"del_{idx}"):
+            st.session_state.promo_queue.pop(idx)
+            st.rerun()
+        st.markdown("---")
+
+    # --- SCAN ACTION ---
     if st.button("🚀 RUN OPTIMIZED SCAN ALL", type="primary", use_container_width=True):
         api_key = st.secrets.get("ODDS_API_KEY")
         if not api_key:
@@ -116,7 +136,6 @@ if st.session_state.promo_queue:
             for promo in st.session_state.promo_queue:
                 target_codes = SPORT_MAP[promo['Sport']]
                 promo_matches = []
-                
                 for code in target_codes:
                     if code not in cached_data: continue
                     for game in cached_data[code]:
@@ -139,7 +158,6 @@ if st.session_state.promo_queue:
                             best_h = max([h for h in hedge_prices if h['team'] != s['team'] and h['key'] != s['key']], key=lambda x: x['price'], default=None)
                             if best_h:
                                 s_dec, h_dec = convert_american_to_decimal(s['price']), convert_american_to_decimal(best_h['price'])
-                                
                                 if promo['Strategy'] == "Profit Boost (%)":
                                     boosted_s = 1 + ((s_dec - 1) * (1 + (promo['raw_boost'] / 100)))
                                     h_wag = (promo['Wager'] * boosted_s) / h_dec
@@ -155,12 +173,9 @@ if st.session_state.promo_queue:
                                 if roi >= -15:
                                     promo_matches.append({
                                         "promo_id": f"{promo['Source']} {promo['Strategy']} ({promo['Boost']})",
-                                        "strategy_full": promo['Strategy'],
-                                        "source_full": promo['Source'],
-                                        "hedge_full": promo['Hedge'],
-                                        "sport_full": promo['Sport'],
-                                        "wager_full": promo['Wager'],
-                                        "boost_full": promo['Boost'],
+                                        "strategy_full": promo['Strategy'], "source_full": promo['Source'],
+                                        "hedge_full": promo['Hedge'], "sport_full": promo['Sport'],
+                                        "wager_full": promo['Wager'], "boost_full": promo['Boost'],
                                         "game": f"{game['away_team']} vs {game['home_team']}",
                                         "profit": profit, "roi": roi, "h_wager": h_wag,
                                         "s_team": s['team'], "s_price": s['price'], "s_book": s['book'],
@@ -169,7 +184,7 @@ if st.session_state.promo_queue:
                 all_found.extend(sorted(promo_matches, key=lambda x: x['roi'], reverse=True)[:3])
             st.session_state.results = all_found
 
-# --- 3. DISPLAY CATEGORIZED RESULTS ---
+# --- 3. RESULTS ---
 if st.session_state.results:
     st.markdown("---")
     grouped = {}
@@ -181,35 +196,19 @@ if st.session_state.results:
         st.markdown(f'<div class="promo-header">🏆 Top Results: {promo_name}</div>', unsafe_allow_html=True)
         num_matches = len(matches)
         cols = st.columns(num_matches if num_matches > 0 else 1)
-        
         for i, match in enumerate(matches):
             with cols[i]:
                 with st.container(border=True):
-                    # --- Header Section ---
                     st.markdown(f"### {match['game']}")
                     st.success(f"Profit: **${match['profit']:.2f}** ({match['roi']:.1f}%)")
                     st.divider()
-                    
-                    # --- New Detailed Metadata Section ---
-                    st.markdown('<p class="detail-label">Strategy Used</p>', unsafe_allow_html=True)
-                    st.markdown(f'<p class="detail-value">{match["strategy_full"]} ({match["boost_full"]})</p>', unsafe_allow_html=True)
-                    
-                    md1, md2 = st.columns(2)
-                    with md1:
-                        st.markdown('<p class="detail-label">Source / Hedge</p>', unsafe_allow_html=True)
-                        st.markdown(f'<p class="detail-value">{match["source_full"]} / {match["hedge_full"]}</p>', unsafe_allow_html=True)
-                    with md2:
-                        st.markdown('<p class="detail-label">Market</p>', unsafe_allow_html=True)
-                        st.markdown(f'<p class="detail-value">{match["sport_full"]}</p>', unsafe_allow_html=True)
-                    
-                    st.divider()
-                    
-                    # --- Bet Instructions ---
-                    st.info(f"**Bet {match['s_team']}**\n\nBook: {match['s_book']} | Odds: {match['s_price']} | Wager: ${match['wager_full']:.2f}")
-                    st.warning(f"**Bet {match['h_team']}**\n\nBook: {match['h_book']} | Odds: {match['h_price']} | Wager: ${match['h_wager']:.2f}")
+                    st.markdown('<p class="detail-label">Strategy / Market</p>', unsafe_allow_html=True)
+                    st.markdown(f'<p class="detail-value">{match["strategy_full"]} | {match["sport_full"]}</p>', unsafe_allow_html=True)
+                    st.info(f"**Bet {match['s_team']}**\n\n{match['s_book']} | {match['s_price']} | Wager: ${match['wager_full']:.0f}")
+                    st.warning(f"**Bet {match['h_team']}**\n\n{match['h_book']} | {match['h_price']} | Wager: ${match['h_wager']:.2f}")
 
 if st.session_state.results:
-    if st.button("Reset Everything"):
+    if st.button("Clear Results & Queue"):
         st.session_state.promo_queue = []
         st.session_state.results = []
         st.rerun()
