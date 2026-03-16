@@ -17,7 +17,6 @@ def convert_american_to_decimal(american_odds):
     return (american_odds / 100) + 1 if american_odds > 0 else (100 / abs(american_odds)) + 1
 
 # --- STRICT BOOKMAKER MAPPING ---
-# Only these keys will be fetched from the API
 BOOK_MAP = {
     "theScore Bet": "espnbet", 
     "FanDuel": "fanduel", 
@@ -27,7 +26,6 @@ BOOK_MAP = {
     "Caesars": "williamhill_us", 
     "Fanatics": "fanatics"
 }
-# List of internal keys for the API "bookmakers" parameter
 VALID_API_KEYS = list(BOOK_MAP.values())
 
 SPORT_MAP = {
@@ -45,9 +43,12 @@ st.markdown("""
     [data-testid="stSidebar"] { display: none; }
     .stTable { font-size: 0.85rem; }
     .promo-header { 
-        background-color: #1E1E1E; color: white; padding: 8px 15px; 
-        border-radius: 5px; margin-top: 25px; margin-bottom: 10px; font-weight: bold;
+        background-color: #1E1E1E; color: white; padding: 12px 18px; 
+        border-radius: 8px; margin-top: 30px; margin-bottom: 15px; font-weight: bold;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
+    .detail-label { color: #666; font-size: 0.75rem; text-transform: uppercase; font-weight: bold; }
+    .detail-value { font-size: 0.9rem; font-weight: 500; margin-bottom: 8px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -59,7 +60,6 @@ with st.container(border=True):
     c1, c2, c3, c4 = st.columns(4)
     with c1: p_type = st.selectbox("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet", "Standard Arb"])
     with c2: p_wager = st.number_input("Wager ($)", value=50.0, step=5.0)
-    # Added "All" back as a UI option, but mapped strictly to our list
     with c3: p_source = st.selectbox("Source Book", ["All"] + list(BOOK_MAP.keys()), index=1)
     with c4: p_hedge = st.selectbox("Hedge Book", ["All"] + list(BOOK_MAP.keys()), index=0)
 
@@ -101,18 +101,13 @@ if st.session_state.promo_queue:
             for sport_code in required_sport_codes:
                 with st.spinner(f"Fetching {sport_code}..."):
                     url = f"https://api.the-odds-api.com/v4/sports/{sport_code}/odds/"
-                    # CRITICAL: We pass the specific bookmakers list to filter at the API level
                     params = {
-                        'apiKey': api_key,
-                        'regions': 'us,us2',
-                        'markets': 'h2h',
-                        'oddsFormat': 'american',
-                        'bookmakers': ",".join(VALID_API_KEYS)
+                        'apiKey': api_key, 'regions': 'us,us2', 'markets': 'h2h',
+                        'oddsFormat': 'american', 'bookmakers': ",".join(VALID_API_KEYS)
                     }
                     try:
                         res = requests.get(url, params=params)
-                        if res.status_code == 200:
-                            cached_data[sport_code] = res.json()
+                        if res.status_code == 200: cached_data[sport_code] = res.json()
                     except: continue
 
             all_found = []
@@ -129,7 +124,6 @@ if st.session_state.promo_queue:
                         if g_time < now + timedelta(minutes=2): continue
                         
                         source_prices, hedge_prices = [], []
-                        # Logic to handle "All" being limited to our menu
                         s_target = VALID_API_KEYS if promo['Source'] == "All" else [BOOK_MAP[promo['Source']]]
                         h_target = VALID_API_KEYS if promo['Hedge'] == "All" else [BOOK_MAP[promo['Hedge']]]
                         
@@ -142,11 +136,10 @@ if st.session_state.promo_queue:
                                     hedge_prices.append({'team': out['name'], 'price': out['price'], 'book': bm['title'], 'key': bm['key']})
 
                         for s in source_prices:
-                            # Filter out same book and same team for the hedge
                             best_h = max([h for h in hedge_prices if h['team'] != s['team'] and h['key'] != s['key']], key=lambda x: x['price'], default=None)
                             if best_h:
                                 s_dec, h_dec = convert_american_to_decimal(s['price']), convert_american_to_decimal(best_h['price'])
-                                # (Standard calculation logic remains here...)
+                                
                                 if promo['Strategy'] == "Profit Boost (%)":
                                     boosted_s = 1 + ((s_dec - 1) * (1 + (promo['raw_boost'] / 100)))
                                     h_wag = (promo['Wager'] * boosted_s) / h_dec
@@ -162,6 +155,12 @@ if st.session_state.promo_queue:
                                 if roi >= -15:
                                     promo_matches.append({
                                         "promo_id": f"{promo['Source']} {promo['Strategy']} ({promo['Boost']})",
+                                        "strategy_full": promo['Strategy'],
+                                        "source_full": promo['Source'],
+                                        "hedge_full": promo['Hedge'],
+                                        "sport_full": promo['Sport'],
+                                        "wager_full": promo['Wager'],
+                                        "boost_full": promo['Boost'],
                                         "game": f"{game['away_team']} vs {game['home_team']}",
                                         "profit": profit, "roi": roi, "h_wager": h_wag,
                                         "s_team": s['team'], "s_price": s['price'], "s_book": s['book'],
@@ -182,11 +181,35 @@ if st.session_state.results:
         st.markdown(f'<div class="promo-header">🏆 Top Results: {promo_name}</div>', unsafe_allow_html=True)
         num_matches = len(matches)
         cols = st.columns(num_matches if num_matches > 0 else 1)
+        
         for i, match in enumerate(matches):
             with cols[i]:
                 with st.container(border=True):
-                    st.markdown(f"**{match['game']}**")
+                    # --- Header Section ---
+                    st.markdown(f"### {match['game']}")
                     st.success(f"Profit: **${match['profit']:.2f}** ({match['roi']:.1f}%)")
-                    st.caption(f"Bet {match['s_team']} @ {match['s_price']} ({match['s_book']})")
-                    st.caption(f"Hedge {match['h_team']} @ {match['h_price']} ({match['h_book']})")
-                    st.warning(f"Hedge Wager: **${match['h_wager']:.2f}**")
+                    st.divider()
+                    
+                    # --- New Detailed Metadata Section ---
+                    st.markdown('<p class="detail-label">Strategy Used</p>', unsafe_allow_html=True)
+                    st.markdown(f'<p class="detail-value">{match["strategy_full"]} ({match["boost_full"]})</p>', unsafe_allow_html=True)
+                    
+                    md1, md2 = st.columns(2)
+                    with md1:
+                        st.markdown('<p class="detail-label">Source / Hedge</p>', unsafe_allow_html=True)
+                        st.markdown(f'<p class="detail-value">{match["source_full"]} / {match["hedge_full"]}</p>', unsafe_allow_html=True)
+                    with md2:
+                        st.markdown('<p class="detail-label">Market</p>', unsafe_allow_html=True)
+                        st.markdown(f'<p class="detail-value">{match["sport_full"]}</p>', unsafe_allow_html=True)
+                    
+                    st.divider()
+                    
+                    # --- Bet Instructions ---
+                    st.info(f"**Bet {match['s_team']}**\n\nBook: {match['s_book']} | Odds: {match['s_price']} | Wager: ${match['wager_full']:.2f}")
+                    st.warning(f"**Bet {match['h_team']}**\n\nBook: {match['h_book']} | Odds: {match['h_price']} | Wager: ${match['h_wager']:.2f}")
+
+if st.session_state.results:
+    if st.button("Reset Everything"):
+        st.session_state.promo_queue = []
+        st.session_state.results = []
+        st.rerun()
