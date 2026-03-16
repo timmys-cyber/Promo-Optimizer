@@ -1,9 +1,10 @@
 import streamlit as st
 import requests
+import pandas as pd
 from datetime import datetime, timezone, timedelta
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Sportsbook Pro Optimizer", layout="wide")
+st.set_page_config(page_title="Moneymaker Pro", layout="wide")
 
 # --- INITIALIZE SESSION STATE ---
 if "promo_queue" not in st.session_state:
@@ -34,9 +35,8 @@ SPORT_MAP = {
 st.markdown("""
     <style>
     [data-testid="stSidebar"] { display: none; }
-    .queue-container { background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #e0e0e0; }
-    .promo-tag { background-color: #f1f3f6; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85rem; color: #31333F; }
-    .stMetric { border: 1px solid #f0f0f0; padding: 10px; border-radius: 8px; }
+    .stTable { font-size: 0.8rem; }
+    .promo-header { background-color: #1E1E1E; color: white; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -51,59 +51,42 @@ with st.container():
     with c4: p_hedge = st.selectbox("Hedge Book", list(BOOK_MAP.keys()), index=0)
 
     c2_1, c2_2, c2_3 = st.columns([1, 1, 1])
-    with c2_1: 
-        p_boost = st.number_input("Boost %", value=50) if p_type == "Profit Boost (%)" else 0
-    with c2_2: 
-        p_sport = st.selectbox("Sport Category", list(SPORT_MAP.keys()))
+    with c2_1: p_boost = st.number_input("Boost %", value=50) if p_type == "Profit Boost (%)" else 0
+    with c2_2: p_sport = st.selectbox("Sport Category", list(SPORT_MAP.keys()))
     with c2_3:
         st.write("")
-        if st.button("➕ Add Promo to Queue", use_container_width=True, type="secondary"):
+        if st.button("➕ Add to Queue", use_container_width=True):
             st.session_state.promo_queue.append({
-                "type": p_type, "wager": p_wager, "source": p_source, 
-                "hedge": p_hedge, "boost": p_boost, "sport": p_sport
+                "Strategy": p_type, "Wager": p_wager, "Source": p_source, 
+                "Hedge": p_hedge, "Boost": f"{p_boost}%" if p_type == "Profit Boost (%)" else "-", 
+                "Sport": p_sport, "raw_boost": p_boost
             })
             st.rerun()
 
-# --- 2. DISPLAY QUEUE ---
+# --- 2. CONDENSED QUEUE VIEW ---
 if st.session_state.promo_queue:
-    st.markdown("### 📋 Pending Promo Queue")
+    st.subheader("📋 Promo Queue")
+    df_queue = pd.DataFrame(st.session_state.promo_queue).drop(columns=['raw_boost'])
+    st.table(df_queue) # Table is much more compact than individual containers
     
-    # Summary Metric
-    total_wager = sum([p['wager'] for p in st.session_state.promo_queue])
-    st.caption(f"Total Bankroll Required for Source Bets: **${total_wager:.2f}**")
-
-    for idx, p in enumerate(st.session_state.promo_queue):
-        with st.container():
-            col_a, col_b = st.columns([0.85, 0.15])
-            
-            # Formatting the boost string
-            boost_str = f" | {p['boost']}% Boost" if p['type'] == "Profit Boost (%)" else ""
-            
-            col_a.markdown(
-                f"""
-                **{p['source']}** <span class="promo-tag">{p['type']}</span>  
-                **Wager:** ${p['wager']:.2f}{boost_str} | **Sport:** {p['sport']}
-                """, unsafe_allow_html=True
-            )
-            
-            if col_b.button("🗑️", key=f"rm_{idx}"):
-                st.session_state.promo_queue.pop(idx)
-                st.rerun()
-        st.divider()
+    qc1, qc2 = st.columns([1, 4])
+    if qc1.button("🗑️ Clear Queue"):
+        st.session_state.promo_queue = []
+        st.rerun()
 
     # --- SCAN LOGIC ---
-    if st.button("🚀 SCAN ALL QUEUED PROMOS", type="primary", use_container_width=True):
+    if st.button("🚀 RUN OPTIMIZED SCAN", type="primary", use_container_width=True):
         api_key = st.secrets.get("ODDS_API_KEY")
         if not api_key:
             st.error("Missing API Key.")
         else:
             required_sport_codes = set()
-            for promo in st.session_state.promo_queue:
-                required_sport_codes.update(SPORT_MAP[promo['sport']])
+            for p in st.session_state.promo_queue:
+                required_sport_codes.update(SPORT_MAP[p['Sport']])
             
             cached_data = {}
             for sport_code in required_sport_codes:
-                with st.spinner(f"Fetching {sport_code} odds..."):
+                with st.spinner(f"Fetching {sport_code}..."):
                     url = f"https://api.the-odds-api.com/v4/sports/{sport_code}/odds/"
                     params = {'apiKey': api_key, 'regions': 'us', 'markets': 'h2h', 'oddsFormat': 'american'}
                     res = requests.get(url, params=params)
@@ -114,7 +97,8 @@ if st.session_state.promo_queue:
             now = datetime.now(timezone.utc)
             
             for promo in st.session_state.promo_queue:
-                target_codes = SPORT_MAP[promo['sport']]
+                target_codes = SPORT_MAP[promo['Sport']]
+                promo_results = []
                 for code in target_codes:
                     if code not in cached_data: continue
                     for game in cached_data[code]:
@@ -122,7 +106,7 @@ if st.session_state.promo_queue:
                         if g_time < now + timedelta(minutes=2): continue
                         
                         source_prices, hedge_prices = [], []
-                        s_key, h_key = BOOK_MAP[promo['source']], BOOK_MAP[promo['hedge']]
+                        s_key, h_key = BOOK_MAP[promo['Source']], BOOK_MAP[promo['Hedge']]
                         
                         for bm in game['bookmakers']:
                             if s_key == "all" or bm['key'] == s_key:
@@ -136,40 +120,57 @@ if st.session_state.promo_queue:
                             best_h = max([h for h in hedge_prices if h['team'] != s['team'] and h['key'] != s['key']], key=lambda x: x['price'], default=None)
                             if best_h:
                                 s_dec, h_dec = convert_american_to_decimal(s['price']), convert_american_to_decimal(best_h['price'])
-                                
-                                if promo['type'] == "Profit Boost (%)":
-                                    boosted_s = 1 + ((s_dec - 1) * (1 + (promo['boost'] / 100)))
-                                    h_wag = (promo['wager'] * boosted_s) / h_dec
-                                    profit = (promo['wager'] * boosted_s) - (promo['wager'] + h_wag)
-                                elif promo['type'] == "Bonus Bet":
-                                    h_wag = (promo['wager'] * (s_dec - 1)) / h_dec
-                                    profit = (promo['wager'] * (s_dec - 1)) - h_wag
+                                if promo['Strategy'] == "Profit Boost (%)":
+                                    boosted_s = 1 + ((s_dec - 1) * (1 + (promo['raw_boost'] / 100)))
+                                    h_wag = (promo['Wager'] * boosted_s) / h_dec
+                                    profit = (promo['Wager'] * boosted_s) - (promo['Wager'] + h_wag)
+                                elif promo['Strategy'] == "Bonus Bet":
+                                    h_wag = (promo['Wager'] * (s_dec - 1)) / h_dec
+                                    profit = (promo['Wager'] * (s_dec - 1)) - h_wag
                                 else:
-                                    h_wag = (promo['wager'] * s_dec) / h_dec
-                                    profit = (promo['wager'] * s_dec) - (promo['wager'] + h_wag)
+                                    h_wag = (promo['Wager'] * s_dec) / h_dec
+                                    profit = (promo['Wager'] * s_dec) - (promo['Wager'] + h_wag)
 
-                                roi = (profit / promo['wager']) * 100
-                                if roi >= -12:
-                                    found_opps.append({
-                                        "label": f"{promo['source']} {promo['type']}",
+                                roi = (profit / promo['Wager']) * 100
+                                if roi >= -15:
+                                    promo_results.append({
+                                        "promo_id": f"{promo['Source']} {promo['Strategy']} ({promo['Boost']})",
                                         "game": f"{game['away_team']} vs {game['home_team']}",
                                         "profit": profit, "roi": roi, "h_wager": h_wag,
                                         "s_team": s['team'], "s_price": s['price'], "s_book": s['book'],
                                         "h_team": best_h['team'], "h_price": best_h['price'], "h_book": best_h['book']
                                     })
+                # Sort this promo's specific results and take top 3
+                top_3 = sorted(promo_results, key=lambda x: x['roi'], reverse=True)[:3]
+                found_opps.extend(top_3)
+            
+            # Final deduplication (if same game/odds appear for multiple promos, keep them)
             st.session_state.results = found_opps
 
-# --- 3. DISPLAY RESULTS ---
+# --- 3. DISPLAY CATEGORIZED RESULTS ---
 if st.session_state.results:
     st.markdown("---")
-    st.subheader(f"🎯 Top Opportunities ({len(st.session_state.results)})")
-    for op in sorted(st.session_state.results, key=lambda x: x['roi'], reverse=True):
-        with st.expander(f"💰 +${op['profit']:.2f} ({op['roi']:.1f}% ROI) | {op['label']} | {op['game']}"):
-            res_c1, res_c2 = st.columns(2)
-            res_c1.info(f"**Bet {op['s_team']}**\n\nBook: {op['s_book']} | Odds: {op['s_price']}")
-            res_c2.warning(f"**Bet {op['h_team']}**\n\nBook: {op['h_book']} | Odds: {op['h_price']} | **Hedge: ${op['h_wager']:.2f}**")
+    # Group results by the promo_id
+    grouped = {}
+    for res in st.session_state.results:
+        if res['promo_id'] not in grouped: grouped[res['promo_id']] = []
+        grouped[res['promo_id']].append(res)
 
-if st.button("Reset Everything", type="primary"):
-    st.session_state.promo_queue = []
-    st.session_state.results = []
-    st.rerun()
+    for promo_name, matches in grouped.items():
+        st.markdown(f'<div class="promo-header">🏆 Top 3: {promo_name}</div>', unsafe_allow_html=True)
+        cols = st.columns(3)
+        for i, match in enumerate(matches):
+            with cols[i]:
+                with st.container(border=True):
+                    st.markdown(f"**{match['game']}**")
+                    st.success(f"Profit: **${match['profit']:.2f}** ({match['roi']:.1f}%)")
+                    st.caption(f"Bet {match['s_team']} @ {match['s_price']} ({match['s_book']})")
+                    st.caption(f"Hedge {match['h_team']} @ {match['h_price']} ({match['h_book']})")
+                    st.warning(f"Hedge Wager: **${match['h_wager']:.2f}**")
+
+# --- FOOTER ---
+if st.session_state.results:
+    if st.button("Reset Everything"):
+        st.session_state.promo_queue = []
+        st.session_state.results = []
+        st.rerun()
