@@ -1,6 +1,5 @@
 import streamlit as st
 import requests
-import pandas as pd
 from datetime import datetime, timezone, timedelta
 
 # --- PAGE CONFIG ---
@@ -41,17 +40,15 @@ SPORT_MAP = {
 st.markdown("""
     <style>
     [data-testid="stSidebar"] { display: none; }
+    /* Tighten up the row spacing */
+    [data-testid="stVerticalBlock"] > div { padding-top: 0rem; padding-bottom: 0rem; }
     .promo-header { 
-        background-color: #1E1E1E; color: white; padding: 12px 18px; 
-        border-radius: 8px; margin-top: 30px; margin-bottom: 15px; font-weight: bold;
+        background-color: #1E1E1E; color: white; padding: 10px 15px; 
+        border-radius: 8px; margin-top: 20px; margin-bottom: 10px; font-weight: bold;
     }
-    .queue-row {
-        padding: 5px 10px;
-        border-bottom: 1px solid #eee;
-        font-size: 0.9rem;
-    }
-    .detail-label { color: #666; font-size: 0.75rem; text-transform: uppercase; font-weight: bold; }
-    .detail-value { font-size: 0.9rem; font-weight: 500; margin-bottom: 8px; }
+    .queue-text { font-size: 0.85rem; margin: 0; padding: 0; line-height: 1.2; }
+    .detail-label { color: #666; font-size: 0.7rem; text-transform: uppercase; font-weight: bold; }
+    .detail-value { font-size: 0.85rem; font-weight: 500; margin-bottom: 5px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -59,7 +56,6 @@ st.title("💰 Multi-Promo Optimizer")
 
 # --- 1. PROMO INPUT ---
 with st.container(border=True):
-    st.markdown("**Add Promo to Queue**")
     c1, c2, c3, c4 = st.columns(4)
     with c1: p_type = st.selectbox("Strategy", ["Profit Boost (%)", "Bonus Bet", "No-Sweat Bet", "Standard Arb"])
     with c2: p_wager = st.number_input("Wager ($)", value=50.0, step=5.0)
@@ -79,35 +75,33 @@ with st.container(border=True):
             })
             st.rerun()
 
-# --- 2. INTERACTIVE QUEUE ---
+# --- 2. TIGHTENED INTERACTIVE QUEUE ---
 if st.session_state.promo_queue:
     st.subheader("📋 Pending Queue")
     
-    # Header Row for Queue
-    h_col1, h_col2, h_col3, h_col4, h_col5, h_col6 = st.columns([2, 1, 1.5, 1.5, 1, 0.5])
-    h_col1.caption("STRATEGY")
-    h_col2.caption("WAGER")
-    h_col3.caption("SOURCE")
-    h_col4.caption("HEDGE")
-    h_col5.caption("SPORT")
-    h_col6.write("")
-
-    # Individual Rows with Trash Icons
+    # Header Row (More condensed ratios)
+    h_col = st.columns([2.5, 0.8, 1.2, 1.2, 1.2, 0.4])
+    h_col[0].caption("PROMO / BOOST")
+    h_col[1].caption("WAGER")
+    h_col[2].caption("SOURCE")
+    h_col[3].caption("HEDGE")
+    h_col[4].caption("SPORT")
+    
+    # Row Loop
     for idx, promo in enumerate(st.session_state.promo_queue):
-        r_col1, r_col2, r_col3, r_col4, r_col5, r_col6 = st.columns([2, 1, 1.5, 1.5, 1, 0.5])
+        r_col = st.columns([2.5, 0.8, 1.2, 1.2, 1.2, 0.4])
         
-        r_col1.write(f"**{promo['Strategy']}** ({promo['Boost']})")
-        r_col2.write(f"${promo['Wager']:.0f}")
-        r_col3.write(promo['Source'])
-        r_col4.write(promo['Hedge'])
-        r_col5.write(promo['Sport'])
+        r_col[0].markdown(f'<p class="queue-text"><b>{promo["Strategy"]}</b> ({promo["Boost"]})</p>', unsafe_allow_html=True)
+        r_col[1].markdown(f'<p class="queue-text">${promo["Wager"]:.0f}</p>', unsafe_allow_html=True)
+        r_col[2].markdown(f'<p class="queue-text">{promo["Source"]}</p>', unsafe_allow_html=True)
+        r_col[3].markdown(f'<p class="queue-text">{promo["Hedge"]}</p>', unsafe_allow_html=True)
+        r_col[4].markdown(f'<p class="queue-text">{promo["Sport"]}</p>', unsafe_allow_html=True)
         
-        if r_col6.button("🗑️", key=f"del_{idx}"):
+        if r_col[5].button("🗑️", key=f"del_{idx}"):
             st.session_state.promo_queue.pop(idx)
             st.rerun()
-        st.markdown("---")
 
-    # --- SCAN ACTION ---
+    st.write("") # Tiny spacer before scan button
     if st.button("🚀 RUN OPTIMIZED SCAN ALL", type="primary", use_container_width=True):
         api_key = st.secrets.get("ODDS_API_KEY")
         if not api_key:
@@ -199,9 +193,8 @@ if st.session_state.results:
         for i, match in enumerate(matches):
             with cols[i]:
                 with st.container(border=True):
-                    st.markdown(f"### {match['game']}")
+                    st.markdown(f"**{match['game']}**")
                     st.success(f"Profit: **${match['profit']:.2f}** ({match['roi']:.1f}%)")
-                    st.divider()
                     st.markdown('<p class="detail-label">Strategy / Market</p>', unsafe_allow_html=True)
                     st.markdown(f'<p class="detail-value">{match["strategy_full"]} | {match["sport_full"]}</p>', unsafe_allow_html=True)
                     st.info(f"**Bet {match['s_team']}**\n\n{match['s_book']} | {match['s_price']} | Wager: ${match['wager_full']:.0f}")
